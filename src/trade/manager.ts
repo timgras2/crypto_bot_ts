@@ -33,6 +33,7 @@ export class TradeManager {
     return {
       market: trade.market,
       buyPrice: trade.buyPrice.toString(),
+      quantity: trade.quantity.toString(),
       currentPrice: trade.currentPrice.toString(),
       highestPrice: trade.highestPrice.toString(),
       trailingStopPrice: trade.trailingStopPrice.toString(),
@@ -49,6 +50,7 @@ export class TradeManager {
     return {
       market: data.market as MarketSymbol,
       buyPrice: new Decimal(data.buyPrice),
+      quantity: new Decimal(data.quantity),
       currentPrice: new Decimal(data.currentPrice),
       highestPrice: new Decimal(data.highestPrice),
       trailingStopPrice: new Decimal(data.trailingStopPrice),
@@ -66,7 +68,6 @@ export class TradeManager {
       this.serializeTrade(trade)
     );
     await saveJson(ACTIVE_TRADES_FILE, serialized);
-    logger.info(`Saved ${serialized.length} active trades`);
   }
 
   /**
@@ -86,7 +87,7 @@ export class TradeManager {
       try {
         const trade = this.deserializeTrade(serialized);
         this.activeTrades.set(trade.market, trade);
-        await this.startMonitoring(trade.market, trade.buyPrice);
+        await this.startMonitoring(trade.market, trade.buyPrice, trade.quantity);
         logger.info(`Restored monitoring for ${trade.market}`);
       } catch (error) {
         logger.error(`Failed to restore trade for ${serialized.market}: ${String(error)}`);
@@ -97,11 +98,14 @@ export class TradeManager {
   /**
    * Place a market buy order
    */
-  async placeMarketBuy(symbol: MarketSymbol, amountUsdt: Decimal): Promise<Decimal | null> {
+  async placeMarketBuy(
+    symbol: MarketSymbol,
+    amountUsdt: Decimal
+  ): Promise<{ avgPrice: Decimal; quantity: Decimal } | null> {
     try {
       logger.info(`Placing market buy order: ${symbol} for ${amountUsdt.toString()} USDT`);
 
-      const orderResponse = await this.api.placeOrder({
+      let orderResponse = await this.api.placeOrder({
         symbol,
         side: 'BUY',
         type: 'MARKET',
@@ -114,7 +118,31 @@ export class TradeManager {
         return null;
       }
 
-      // Calculate average buy price
+      // If execution details are missing, query the order to get fill information
+      if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
+        logger.info(`Initial response missing execution details, querying order ${orderResponse.orderId}`);
+
+        // Wait a moment for order to fill
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
+        if (!orderDetails) {
+          logger.error(`Failed to query order details for ${symbol}`);
+          return null;
+        }
+
+        if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
+          logger.error(
+            `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
+            { orderDetails }
+          );
+          return null;
+        }
+
+        orderResponse = orderDetails;
+      }
+
+      // Calculate average buy price and quantity
       const executedQty = new Decimal(orderResponse.executedQty);
       const cumulativeQuoteQty = new Decimal(orderResponse.cummulativeQuoteQty);
       const avgPrice = cumulativeQuoteQty.div(executedQty);
@@ -123,7 +151,7 @@ export class TradeManager {
         `Buy order executed: ${symbol} at avg price ${avgPrice.toString()} (qty: ${executedQty.toString()})`
       );
 
-      return avgPrice;
+      return { avgPrice, quantity: executedQty };
     } catch (error) {
       logger.error(`Error placing market buy for ${symbol}: ${String(error)}`);
       return null;
@@ -137,7 +165,7 @@ export class TradeManager {
     try {
       logger.info(`Placing market sell order: ${symbol} for ${quantity.toString()} units`);
 
-      const orderResponse = await this.api.placeOrder({
+      let orderResponse = await this.api.placeOrder({
         symbol,
         side: 'SELL',
         type: 'MARKET',
@@ -148,6 +176,30 @@ export class TradeManager {
       if (!orderResponse) {
         logger.error(`Failed to place sell order for ${symbol}`);
         return null;
+      }
+
+      // If execution details are missing, query the order to get fill information
+      if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
+        logger.info(`Initial response missing execution details, querying order ${orderResponse.orderId}`);
+
+        // Wait a moment for order to fill
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
+        if (!orderDetails) {
+          logger.error(`Failed to query order details for ${symbol}`);
+          return null;
+        }
+
+        if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
+          logger.error(
+            `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
+            { orderDetails }
+          );
+          return null;
+        }
+
+        orderResponse = orderDetails;
       }
 
       const executedQty = new Decimal(orderResponse.executedQty);
@@ -166,14 +218,15 @@ export class TradeManager {
   /**
    * Start monitoring a trade with trailing stop-loss
    */
-  async startMonitoring(symbol: MarketSymbol, buyPrice: Decimal): Promise<void> {
+  async startMonitoring(symbol: MarketSymbol, buyPrice: Decimal, quantity: Decimal): Promise<void> {
     // Initialize trade state
-    const stopLossPrice = buyPrice.mul(new Decimal(1).minus(this.config.minProfitPct.div(100)));
+    const stopLossPrice = buyPrice.mul(new Decimal(1).minus(this.config.stopLossPct.div(100)));
     const trailingStopPrice = buyPrice.mul(new Decimal(1).minus(this.config.trailingPct.div(100)));
 
     const trade: TradeState = {
       market: symbol,
       buyPrice,
+      quantity,
       currentPrice: buyPrice,
       highestPrice: buyPrice,
       trailingStopPrice,
@@ -278,10 +331,19 @@ export class TradeManager {
       return;
     }
 
-    // Calculate quantity to sell (use typical trade amount / buy price for estimation)
-    const quantity = this.config.maxTradeAmount.div(trade.buyPrice);
+    // Get symbol precision and round quantity
+    const precision = await this.api.getSymbolPrecision(symbol);
+    if (precision === null) {
+      logger.error(`Cannot get precision for ${symbol}, using stored quantity as-is`);
+      return;
+    }
 
-    const sellPrice = await this.placeMarketSell(symbol, quantity);
+    // Round quantity to the correct decimal places
+    const roundedQuantity = trade.quantity.toDecimalPlaces(precision, Decimal.ROUND_DOWN);
+
+    logger.info(`Selling ${symbol}: quantity ${trade.quantity.toString()} rounded to ${roundedQuantity.toString()} (precision: ${precision})`);
+
+    const sellPrice = await this.placeMarketSell(symbol, roundedQuantity);
     if (!sellPrice) {
       logger.error(`Failed to execute sell for ${symbol}`);
       return;

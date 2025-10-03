@@ -6,6 +6,14 @@ import { loadJson, saveJson } from '../utils/persistence.js';
 const PREVIOUS_MARKETS_FILE = 'previous_markets.json';
 
 /**
+ * Structure to store markets along with their quote currency
+ */
+interface MarketBaseline {
+  quoteCurrency: string;
+  markets: string[];
+}
+
+/**
  * Tracks market listings and detects new listings
  */
 export class MarketTracker {
@@ -16,16 +24,34 @@ export class MarketTracker {
 
   /**
    * Load previously seen markets from disk
+   * Returns empty array if quote currency has changed
    */
   async loadPreviousMarkets(): Promise<string[]> {
-    return loadJson<string[]>(PREVIOUS_MARKETS_FILE, []);
+    const baseline = await loadJson<MarketBaseline>(PREVIOUS_MARKETS_FILE, {
+      quoteCurrency: this.quoteCurrency,
+      markets: [],
+    });
+
+    // If quote currency has changed, treat as first run
+    if (baseline.quoteCurrency !== this.quoteCurrency) {
+      logger.info(
+        `Quote currency changed from ${baseline.quoteCurrency} to ${this.quoteCurrency}. Establishing new baseline.`
+      );
+      return [];
+    }
+
+    return baseline.markets;
   }
 
   /**
-   * Save current markets to disk
+   * Save current markets to disk along with quote currency
    */
   async savePreviousMarkets(markets: string[]): Promise<void> {
-    await saveJson(PREVIOUS_MARKETS_FILE, markets);
+    const baseline: MarketBaseline = {
+      quoteCurrency: this.quoteCurrency,
+      markets,
+    };
+    await saveJson(PREVIOUS_MARKETS_FILE, baseline);
   }
 
   /**

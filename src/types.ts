@@ -9,8 +9,8 @@ export type MarketSymbol = string & { readonly __brand: 'MarketSymbol' };
  * Trading configuration parameters
  */
 export interface TradingConfig {
-  minProfitPct: Decimal; // Stop loss percentage
-  trailingPct: Decimal; // Trailing stop percentage
+  stopLossPct: Decimal; // Stop loss percentage (max loss before exit)
+  trailingPct: Decimal; // Trailing stop percentage (profit protection)
   maxTradeAmount: Decimal; // Max USDT per trade
   checkInterval: number; // Price check interval (seconds)
   maxRetries: number; // API retry attempts
@@ -36,6 +36,7 @@ export interface MexcConfig {
 export interface TradeState {
   market: MarketSymbol;
   buyPrice: Decimal;
+  quantity: Decimal; // Actual quantity bought (base asset)
   currentPrice: Decimal;
   highestPrice: Decimal;
   trailingStopPrice: Decimal;
@@ -50,6 +51,7 @@ export interface TradeState {
 export interface SerializedTradeState {
   market: string;
   buyPrice: string;
+  quantity: string; // Actual quantity bought (base asset)
   currentPrice: string;
   highestPrice: string;
   trailingStopPrice: string;
@@ -142,6 +144,9 @@ export interface SymbolInfo {
   status: string;
   baseAsset: string;
   quoteAsset: string;
+  baseAssetPrecision: number;
+  quotePrecision: number;
+  quoteAssetPrecision: number;
   isSpotTradingAllowed: boolean;
 }
 

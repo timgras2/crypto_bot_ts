@@ -36,8 +36,8 @@ The bot follows a modular architecture with clear separation of concerns:
    - Places market buy orders using `quoteOrderQty` (USDT amount)
    - Spawns async monitoring tasks for each active trade
    - Implements trailing stop-loss logic with dual thresholds:
-     - **Stop Loss**: Absolute loss protection (e.g., -5%)
-     - **Trailing Stop**: Profit protection that moves with price (e.g., -3% from peak)
+     - **Stop Loss** (`STOP_LOSS_PCT`): Fixed loss protection threshold (e.g., -20% from entry)
+     - **Trailing Stop** (`TRAILING_PCT`): Dynamic profit protection that follows price upward (e.g., -10% from peak)
    - Persists trade state to `data/active_trades.json` for crash recovery
    - Records completed trades to `data/completed_trades.json`
 
@@ -90,9 +90,11 @@ Configuration uses **Zod** schemas (`src/config.ts`) for runtime validation with
 
 **Critical Trading Params**:
 - `MAX_TRADE_AMOUNT` (1.0-10000.0 USDT) - Amount per trade
-- `MIN_PROFIT_PCT` (0.1-50.0) - Stop loss threshold
-- `TRAILING_PCT` (0.1-20.0) - Trailing stop threshold
+- `STOP_LOSS_PCT` (0.1-50.0) - Maximum loss threshold before exit (e.g., 20.0 = exit at -20%)
+- `TRAILING_PCT` (0.1-20.0) - Trailing stop distance from peak (e.g., 10.0 = exit when price drops 10% from highest point)
 - `QUOTE_CURRENCY` (USDT/USDC/BTC/BUSD) - Quote currency filter
+
+**Note**: The deprecated `MIN_PROFIT_PCT` is still supported for backward compatibility but will log a warning. Use `STOP_LOSS_PCT` instead.
 
 Configuration loading will throw clear errors if values are out of range or API keys are malformed.
 

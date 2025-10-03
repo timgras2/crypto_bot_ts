@@ -22,6 +22,7 @@ logs/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~
@@ -38,3 +39,4 @@ coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+scripts/

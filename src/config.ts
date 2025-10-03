@@ -11,11 +11,11 @@ config();
  * Zod schema for trading configuration with validation ranges
  */
 const tradingConfigSchema = z.object({
-  minProfitPct: z
+  stopLossPct: z
     .string()
     .transform((val) => new Decimal(val))
     .refine((val) => val.gte(0.1) && val.lte(50), {
-      message: 'MIN_PROFIT_PCT must be between 0.1 and 50',
+      message: 'STOP_LOSS_PCT must be between 0.1 and 50',
     }),
   trailingPct: z
     .string()
@@ -101,9 +101,16 @@ const mexcConfigSchema = z.object({
  */
 export function loadConfig(): { trading: TradingConfig; mexc: MexcConfig } {
   try {
+    // Support backward compatibility with deprecated MIN_PROFIT_PCT
+    const stopLossPct = process.env.STOP_LOSS_PCT || process.env.MIN_PROFIT_PCT || '5.0';
+
+    if (process.env.MIN_PROFIT_PCT && !process.env.STOP_LOSS_PCT) {
+      logger.warn('MIN_PROFIT_PCT is deprecated. Please use STOP_LOSS_PCT instead.');
+    }
+
     // Validate trading configuration
     const tradingConfig = tradingConfigSchema.parse({
-      minProfitPct: process.env.MIN_PROFIT_PCT || '5.0',
+      stopLossPct,
       trailingPct: process.env.TRAILING_PCT || '3.0',
       maxTradeAmount: process.env.MAX_TRADE_AMOUNT || '10.0',
       checkInterval: process.env.CHECK_INTERVAL || '10',

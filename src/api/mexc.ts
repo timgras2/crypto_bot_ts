@@ -44,6 +44,7 @@ export class MexcAPI {
   private readonly config: MexcConfig;
   private readonly client: AxiosInstance;
   private readonly rateLimiter: RateLimiter;
+  private symbolPrecisionCache = new Map<string, number>();
 
   constructor(config: MexcConfig) {
     this.config = config;
@@ -91,7 +92,7 @@ export class MexcAPI {
         params.timestamp = Date.now();
         params.recvWindow = this.config.receiveWindow;
 
-        // Create query string and sign it
+        // Create query string and sign it (params must be in insertion order, NOT sorted)
         const queryString = Object.entries(params)
           .filter(([, value]) => value !== undefined)
           .map(([key, value]) => `${key}=${String(value)}`)
@@ -103,8 +104,7 @@ export class MexcAPI {
       const response = await this.client.request<T>({
         method,
         url: endpoint,
-        params: method === 'GET' || method === 'DELETE' ? params : undefined,
-        data: method === 'POST' ? params : undefined,
+        params: params, // MEXC requires all params in query string, even for POST
         headers,
       });
 
@@ -147,6 +147,34 @@ export class MexcAPI {
   }
 
   /**
+   * Get base asset precision for a symbol (cached)
+   */
+  async getSymbolPrecision(symbol: string): Promise<number | null> {
+    // Check cache first
+    const cached = this.symbolPrecisionCache.get(symbol);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    // Fetch exchange info
+    const exchangeInfo = await this.getExchangeInfo();
+    if (!exchangeInfo) {
+      logger.error(`Failed to fetch exchange info for precision lookup`);
+      return null;
+    }
+
+    // Find symbol and cache precision
+    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+    if (!symbolInfo) {
+      logger.error(`Symbol ${symbol} not found in exchange info`);
+      return null;
+    }
+
+    this.symbolPrecisionCache.set(symbol, symbolInfo.baseAssetPrecision);
+    return symbolInfo.baseAssetPrecision;
+  }
+
+  /**
    * Get 24-hour ticker for a symbol
    */
   async getTicker24h(symbol: string): Promise<TickerResponse | null> {
@@ -179,6 +207,13 @@ export class MexcAPI {
     };
 
     return this.request<OrderResponse>('POST', '/api/v3/order', params, true);
+  }
+
+  /**
+   * Get order details
+   */
+  async getOrder(symbol: string, orderId: string): Promise<OrderResponse | null> {
+    return this.request<OrderResponse>('GET', '/api/v3/order', { symbol, orderId }, true);
   }
 
   /**

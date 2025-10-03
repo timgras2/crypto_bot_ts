@@ -66,7 +66,7 @@ class TradingBot {
     console.log(`💰 Max trade amount: ${this.config.trading.maxTradeAmount.toString()} USDT`);
     console.log(`🔄 Checking every ${this.config.trading.checkInterval} seconds`);
     console.log(
-      `📈 Stop loss: ${this.config.trading.minProfitPct.toString()}% | Trailing stop: ${this.config.trading.trailingPct.toString()}%`
+      `📈 Stop loss: ${this.config.trading.stopLossPct.toString()}% | Trailing stop: ${this.config.trading.trailingPct.toString()}%`
     );
     console.log(`💱 Quote currency: ${this.config.trading.quoteCurrency}`);
     console.log('-'.repeat(60));
@@ -218,12 +218,12 @@ class TradingBot {
 
     // Execute buy order
     console.log(`💸 EXECUTING BUY ORDER: ${tradeAmount.toString()} USDT of ${market}`);
-    const buyPrice = await this.tradeManager.placeMarketBuy(market, tradeAmount);
+    const buyResult = await this.tradeManager.placeMarketBuy(market, tradeAmount);
 
-    if (buyPrice) {
-      console.log(`✅ BUY SUCCESS: ${market} at ${buyPrice.toString()} USDT`);
+    if (buyResult) {
+      console.log(`✅ BUY SUCCESS: ${market} at ${buyResult.avgPrice.toString()} USDT (qty: ${buyResult.quantity.toString()})`);
       console.log(`🎯 Starting monitoring with trailing stop-loss...`);
-      await this.tradeManager.startMonitoring(market, buyPrice);
+      await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity);
     } else {
       console.log(`❌ BUY FAILED: Could not execute order for ${market}`);
     }
