@@ -1,0 +1,153 @@
+import Decimal from 'decimal.js';
+
+/**
+ * Branded type for market symbols (e.g., "BTCUSDT")
+ */
+export type MarketSymbol = string & { readonly __brand: 'MarketSymbol' };
+
+/**
+ * Trading configuration parameters
+ */
+export interface TradingConfig {
+  minProfitPct: Decimal; // Stop loss percentage
+  trailingPct: Decimal; // Trailing stop percentage
+  maxTradeAmount: Decimal; // Max USDT per trade
+  checkInterval: number; // Price check interval (seconds)
+  maxRetries: number; // API retry attempts
+  retryDelay: number; // Delay between retries (seconds)
+  quoteCurrency: string; // Quote currency filter (USDT, USDC, BTC)
+}
+
+/**
+ * MEXC API configuration
+ */
+export interface MexcConfig {
+  apiKey: string;
+  apiSecret: string;
+  baseUrl: string;
+  rateLimit: number; // Requests per minute
+  timeout: number; // Milliseconds
+  receiveWindow: number; // Milliseconds
+}
+
+/**
+ * Current state of a trade
+ */
+export interface TradeState {
+  market: MarketSymbol;
+  buyPrice: Decimal;
+  currentPrice: Decimal;
+  highestPrice: Decimal;
+  trailingStopPrice: Decimal;
+  stopLossPrice: Decimal;
+  startTime: Date;
+  lastUpdate: Date;
+}
+
+/**
+ * Serializable version of TradeState for JSON persistence
+ */
+export interface SerializedTradeState {
+  market: string;
+  buyPrice: string;
+  currentPrice: string;
+  highestPrice: string;
+  trailingStopPrice: string;
+  stopLossPrice: string;
+  startTime: string; // ISO string
+  lastUpdate: string; // ISO string
+}
+
+/**
+ * Completed trade record
+ */
+export interface CompletedTrade extends SerializedTradeState {
+  sellPrice: string;
+  sellTime: string; // ISO string
+  profitLossPct: string;
+  profitLossUsdt: string;
+  triggerReason: 'stop_loss' | 'trailing_stop' | 'manual';
+  durationHours: string;
+}
+
+/**
+ * MEXC API order side
+ */
+export type OrderSide = 'BUY' | 'SELL';
+
+/**
+ * MEXC API order type
+ */
+export type OrderType = 'LIMIT' | 'MARKET' | 'STOP_LOSS' | 'TAKE_PROFIT' | 'LIMIT_MAKER';
+
+/**
+ * MEXC API order request
+ */
+export interface OrderRequest {
+  symbol: string;
+  side: OrderSide;
+  type: OrderType;
+  quantity?: string;
+  quoteOrderQty?: string; // For market buys with USDT amount
+  price?: string;
+  recvWindow?: number;
+  timestamp: number;
+}
+
+/**
+ * MEXC API order response
+ */
+export interface OrderResponse {
+  symbol: string;
+  orderId: string;
+  orderListId: number;
+  price: string;
+  origQty: string;
+  executedQty: string;
+  cummulativeQuoteQty: string;
+  status: string;
+  type: string;
+  side: string;
+  transactTime: number;
+}
+
+/**
+ * MEXC API ticker response (24hr)
+ */
+export interface TickerResponse {
+  symbol: string;
+  priceChange: string;
+  priceChangePercent: string;
+  lastPrice: string;
+  volume: string;
+  quoteVolume: string;
+  openTime: number;
+  closeTime: number;
+}
+
+/**
+ * MEXC API exchange info response
+ */
+export interface ExchangeInfo {
+  timezone: string;
+  serverTime: number;
+  symbols: SymbolInfo[];
+}
+
+/**
+ * MEXC symbol information
+ */
+export interface SymbolInfo {
+  symbol: string;
+  status: string;
+  baseAsset: string;
+  quoteAsset: string;
+  isSpotTradingAllowed: boolean;
+}
+
+/**
+ * Result type for operations that can fail
+ */
+export type Result<T, E = Error> =
+  | { success: true; data: T }
+  | { success: false; error: E };
