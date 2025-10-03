@@ -23,6 +23,7 @@ A fully automated cryptocurrency trading bot for the MEXC exchange, built with T
 - 📊 **Comprehensive Logging** - Detailed activity logs using Winston
 - ✅ **Input Validation** - Extensive validation with Zod schemas and clear error messages
 - 🔒 **Type Safety** - Full TypeScript type safety throughout
+- 🎨 **Web Dashboard** - Real-time monitoring with React-based UI showing active trades, P&L, and statistics
 
 ## Quick Start
 
@@ -63,12 +64,19 @@ A fully automated cryptocurrency trading bot for the MEXC exchange, built with T
 
 6. **Run the bot:**
    ```bash
-   # Development mode (with hot reload)
+   # Bot only (development mode with hot reload)
    npm run dev
+
+   # Bot + API + Dashboard (recommended)
+   npm run dev:all
 
    # Production mode
    npm start
    ```
+
+7. **Access the dashboard:**
+   - Open http://localhost:5173 in your browser
+   - The API server runs on http://localhost:3001
 
 ## Configuration
 
@@ -106,6 +114,7 @@ MEXC_RATE_LIMIT=1200                   # Requests per minute
 API_TIMEOUT=30000                      # Request timeout (milliseconds)
 RECEIVE_WINDOW=5000                    # Request receive window (max 60000ms)
 LOG_LEVEL=info                         # Logging level (error, warn, info, debug)
+API_PORT=3001                          # Dashboard API server port
 ```
 
 ## Project Structure
@@ -122,9 +131,19 @@ crypto-bot-ts/
 │   │   └── tracker.ts       # Market listing tracker
 │   ├── trade/
 │   │   └── manager.ts       # Trade execution and monitoring
+│   ├── server/
+│   │   ├── api.ts           # Express API server
+│   │   └── stats.ts         # Trading statistics calculator
 │   └── utils/
 │       ├── logger.ts        # Winston logger setup
 │       └── persistence.ts   # JSON file persistence
+├── ui/                      # React dashboard
+│   ├── src/
+│   │   ├── components/      # React components
+│   │   ├── hooks/           # Custom React hooks
+│   │   ├── types/           # TypeScript types
+│   │   └── main.tsx         # Entry point
+│   └── public/              # Static assets
 ├── tests/                   # Test files
 ├── data/                    # Runtime data (gitignored)
 │   ├── previous_markets.json
@@ -160,9 +179,18 @@ Price drops to $1.44: SELL triggered (45% profit protected)
 ### Available Scripts
 
 ```bash
-npm run dev          # Development mode with hot reload
+# Bot Commands
+npm run dev          # Bot development mode with hot reload
 npm run build        # Compile TypeScript to JavaScript
 npm start            # Run production build
+
+# Dashboard Commands
+npm run server       # Start API server (port 3001)
+npm run ui:dev       # Start UI dev server (port 5173)
+npm run ui:build     # Build UI for production
+npm run dev:all      # Run bot + API + UI concurrently
+
+# Testing & Quality
 npm test             # Run tests
 npm run test:watch   # Run tests in watch mode
 npm run lint         # Lint code
@@ -175,6 +203,28 @@ npm run format       # Format code with Prettier
 ```bash
 npm test
 ```
+
+## Dashboard
+
+The bot includes a real-time web dashboard for monitoring trades and performance:
+
+### Features
+- **Live Monitoring** - Real-time updates of active trades every 3 seconds
+- **Performance Stats** - Win rate, total P&L, average trade duration
+- **Trade History** - View recent completed trades with detailed metrics
+- **Dark Mode** - Full dark mode support for comfortable viewing
+- **Responsive Design** - Works on desktop and mobile devices
+
+### Usage
+1. Start the full stack: `npm run dev:all`
+2. Open http://localhost:5173 in your browser
+3. Dashboard updates automatically as trades execute
+
+### API Endpoints
+- `GET /api/health` - Server health check
+- `GET /api/trades/active` - Current active trades
+- `GET /api/trades/completed` - Trade history
+- `GET /api/stats` - Trading statistics
 
 ## Data Persistence
 
