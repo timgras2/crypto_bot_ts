@@ -41,6 +41,32 @@ The bot follows a modular architecture with clear separation of concerns:
    - Persists trade state to `data/active_trades.json` for crash recovery
    - Records completed trades to `data/completed_trades.json`
 
+5. **API Server** (`src/server/api.ts`) - REST API for dashboard
+   - Express server on port 3001 (configurable via `API_PORT`)
+   - CORS enabled for localhost development
+   - Endpoints:
+     - `GET /api/health` - Health check
+     - `GET /api/trades/active` - Current active trades
+     - `GET /api/trades/completed` - Trade history
+     - `GET /api/stats` - Trading statistics and performance metrics
+   - Can be started standalone via `npm run server`
+
+6. **Stats Calculator** (`src/server/stats.ts`) - Performance metrics
+   - Calculates win rate, total P&L, average trade duration
+   - Tracks best/worst trades
+   - Aggregates data from completed trades
+
+7. **Dashboard UI** (`ui/`) - React-based web interface
+   - Built with React 19, TypeScript, Vite, and Tailwind CSS v4
+   - Real-time polling of API endpoints (3-5 second intervals)
+   - Components:
+     - `Dashboard.tsx` - Main layout with stats cards and tables
+     - `ActiveTradesTable.tsx` - Live monitoring of open positions
+     - `CompletedTradesTable.tsx` - Trade history with P&L
+     - `StatsCard.tsx` - Reusable metric display cards
+   - Hooks for data fetching: `useActiveTrades`, `useCompletedTrades`, `useStats`
+   - Dark mode support throughout
+
 ### Key Design Patterns
 
 **Decimal Precision**: All price/amount calculations use `decimal.js` to avoid floating-point errors. Never use JavaScript's native `Number` for financial calculations.
@@ -63,18 +89,24 @@ The bot follows a modular architecture with clear separation of concerns:
 ## Development Commands
 
 ```bash
-# Development with hot reload
-npm run dev
+# Bot Commands
+npm run dev              # Bot development with hot reload
+npm run build            # Build TypeScript to JavaScript
+npm start                # Run production build
 
-# Build TypeScript to JavaScript
-npm run build
+# API Server
+npm run server           # Start API server standalone (port 3001)
 
-# Run production build
-npm start
+# Dashboard UI
+npm run ui:dev           # Start UI dev server (port 5173)
+npm run ui:build         # Build UI for production
+
+# Run Everything
+npm run dev:all          # Run bot + API + UI concurrently (recommended)
 
 # Testing
-npm test                  # Run all tests
-npm run test:watch        # Watch mode
+npm test                 # Run all tests
+npm run test:watch       # Watch mode
 
 # Code quality
 npm run lint             # Check for linting issues
@@ -93,6 +125,9 @@ Configuration uses **Zod** schemas (`src/config.ts`) for runtime validation with
 - `STOP_LOSS_PCT` (0.1-50.0) - Maximum loss threshold before exit (e.g., 20.0 = exit at -20%)
 - `TRAILING_PCT` (0.1-20.0) - Trailing stop distance from peak (e.g., 10.0 = exit when price drops 10% from highest point)
 - `QUOTE_CURRENCY` (USDT/USDC/BTC/BUSD) - Quote currency filter
+
+**Dashboard Settings**:
+- `API_PORT` (default: 3001) - Port for API server
 
 **Note**: The deprecated `MIN_PROFIT_PCT` is still supported for backward compatibility but will log a warning. Use `STOP_LOSS_PCT` instead.
 

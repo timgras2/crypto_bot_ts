@@ -12,7 +12,11 @@
     "test:watch": "jest --watch",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "server": "tsx src/server/api.ts",
+    "ui:dev": "cd ui && npm run dev",
+    "ui:build": "cd ui && npm run build",
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\" \"npm run ui:dev\" --names \"BOT,API,UI\" --prefix-colors \"green,blue,magenta\""
   },
   "keywords": [
     "cryptocurrency",
@@ -28,16 +32,21 @@
   },
   "dependencies": {
     "axios": "^1.6.5",
+    "cors": "^2.8.5",
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.1",
+    "express": "^5.1.0",
     "winston": "^3.11.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
     "@types/jest": "^29.5.11",
     "@types/node": "^20.11.5",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
+    "concurrently": "^9.2.1",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.1.3",

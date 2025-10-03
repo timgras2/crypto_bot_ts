@@ -4,6 +4,10 @@ package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
+# UI Dependencies and Build
+ui/node_modules/
+ui/dist/
+
 # Build output
 dist/
 build/
