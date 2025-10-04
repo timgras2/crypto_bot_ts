@@ -46,3 +46,13 @@ export type ApiResponse<T> = {
   error?: string;
   count?: number;
 }
+
+export interface ScheduledListing {
+  symbol: string;
+  listingTime: string;
+  quoteCurrency: string;
+  notes?: string;
+  status: 'pending' | 'active' | 'completed' | 'missed';
+  createdAt: string;
+  tradedAt?: string;
+}

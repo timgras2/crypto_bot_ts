@@ -14,6 +14,7 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "server": "tsx src/server/api.ts",
+    "schedule": "tsx src/cli/schedule-listing.ts",
     "ui:dev": "cd ui && npm run dev",
     "ui:build": "cd ui && npm run build",
     "dev:all": "concurrently \"npm run dev\" \"npm run server\" \"npm run ui:dev\" --names \"BOT,API,UI\" --prefix-colors \"green,blue,magenta\""
