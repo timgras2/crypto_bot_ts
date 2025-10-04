@@ -96,129 +96,220 @@ export class TradeManager {
   }
 
   /**
-   * Place a market buy order
+   * Place a market buy order with retry logic
    */
   async placeMarketBuy(
     symbol: MarketSymbol,
-    amountUsdt: Decimal
+    amountUsdt: Decimal,
+    maxAttempts: number = 3
   ): Promise<{ avgPrice: Decimal; quantity: Decimal } | null> {
-    try {
-      logger.info(`Placing market buy order: ${symbol} for ${amountUsdt.toString()} USDT`);
+    let lastError: string = 'Unknown error';
 
-      let orderResponse = await this.api.placeOrder({
-        symbol,
-        side: 'BUY',
-        type: 'MARKET',
-        quoteOrderQty: amountUsdt.toString(), // Buy with USDT amount
-        timestamp: Date.now(),
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        logger.info(
+          `Placing market buy order: ${symbol} for ${amountUsdt.toString()} USDT (attempt ${attempt}/${maxAttempts})`
+        );
 
-      if (!orderResponse) {
-        logger.error(`Failed to place buy order for ${symbol}`);
+        let orderResponse = await this.api.placeOrder({
+          symbol,
+          side: 'BUY',
+          type: 'MARKET',
+          quoteOrderQty: amountUsdt.toString(), // Buy with USDT amount
+          timestamp: Date.now(),
+        });
+
+        if (!orderResponse) {
+          lastError = 'Order response was null';
+          if (attempt < maxAttempts) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+            logger.warn(
+              `Buy order attempt ${attempt} failed (null response), retrying in ${delay}ms...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          logger.error(`Failed to place buy order for ${symbol} after ${maxAttempts} attempts`);
+          return null;
+        }
+
+        // If execution details are missing, query the order to get fill information
+        if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
+          logger.info(
+            `Initial response missing execution details, querying order ${orderResponse.orderId}`
+          );
+
+          // Wait a moment for order to fill
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
+          if (!orderDetails) {
+            lastError = 'Failed to query order details';
+            if (attempt < maxAttempts) {
+              const delay = 2000;
+              logger.warn(`Failed to query order details, retrying in ${delay}ms...`);
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              continue;
+            }
+            logger.error(`Failed to query order details for ${symbol} after ${maxAttempts} attempts`);
+            return null;
+          }
+
+          if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
+            lastError = `Order not filled: status=${orderDetails.status}`;
+            logger.error(
+              `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
+              { orderDetails }
+            );
+            return null;
+          }
+
+          orderResponse = orderDetails;
+        }
+
+        // Calculate average buy price and quantity
+        const executedQty = new Decimal(orderResponse.executedQty);
+        const cumulativeQuoteQty = new Decimal(orderResponse.cummulativeQuoteQty);
+        const avgPrice = cumulativeQuoteQty.div(executedQty);
+
+        logger.info(
+          `Buy order executed: ${symbol} at avg price ${avgPrice.toString()} (qty: ${executedQty.toString()})`
+        );
+
+        return { avgPrice, quantity: executedQty };
+      } catch (error) {
+        lastError = String(error);
+        if (attempt < maxAttempts) {
+          const delay = Math.min(2000 * attempt, 5000);
+          logger.warn(
+            `Error on buy attempt ${attempt}/${maxAttempts}: ${String(error)}, retrying in ${delay}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        logger.error(
+          `Failed to place market buy for ${symbol} after ${maxAttempts} attempts. Last error: ${lastError}`
+        );
         return null;
       }
-
-      // If execution details are missing, query the order to get fill information
-      if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
-        logger.info(`Initial response missing execution details, querying order ${orderResponse.orderId}`);
-
-        // Wait a moment for order to fill
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
-        if (!orderDetails) {
-          logger.error(`Failed to query order details for ${symbol}`);
-          return null;
-        }
-
-        if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
-          logger.error(
-            `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
-            { orderDetails }
-          );
-          return null;
-        }
-
-        orderResponse = orderDetails;
-      }
-
-      // Calculate average buy price and quantity
-      const executedQty = new Decimal(orderResponse.executedQty);
-      const cumulativeQuoteQty = new Decimal(orderResponse.cummulativeQuoteQty);
-      const avgPrice = cumulativeQuoteQty.div(executedQty);
-
-      logger.info(
-        `Buy order executed: ${symbol} at avg price ${avgPrice.toString()} (qty: ${executedQty.toString()})`
-      );
-
-      return { avgPrice, quantity: executedQty };
-    } catch (error) {
-      logger.error(`Error placing market buy for ${symbol}: ${String(error)}`);
-      return null;
     }
+
+    // Should never reach here, but just in case
+    logger.error(`Buy order failed after all retry attempts for ${symbol}. Last error: ${lastError}`);
+    return null;
   }
 
   /**
-   * Place a market sell order
+   * Place a market sell order with retry logic
    */
-  private async placeMarketSell(symbol: MarketSymbol, quantity: Decimal): Promise<Decimal | null> {
-    try {
-      logger.info(`Placing market sell order: ${symbol} for ${quantity.toString()} units`);
+  private async placeMarketSell(
+    symbol: MarketSymbol,
+    quantity: Decimal,
+    maxAttempts: number = 3
+  ): Promise<Decimal | null> {
+    let lastError: string = 'Unknown error';
 
-      let orderResponse = await this.api.placeOrder({
-        symbol,
-        side: 'SELL',
-        type: 'MARKET',
-        quantity: quantity.toString(),
-        timestamp: Date.now(),
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        logger.info(
+          `Placing market sell order: ${symbol} for ${quantity.toString()} units (attempt ${attempt}/${maxAttempts})`
+        );
 
-      if (!orderResponse) {
-        logger.error(`Failed to place sell order for ${symbol}`);
+        let orderResponse = await this.api.placeOrder({
+          symbol,
+          side: 'SELL',
+          type: 'MARKET',
+          quantity: quantity.toString(),
+          timestamp: Date.now(),
+        });
+
+        if (!orderResponse) {
+          lastError = 'Order response was null';
+          if (attempt < maxAttempts) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+            logger.warn(
+              `Sell order attempt ${attempt} failed (null response), retrying in ${delay}ms...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            continue;
+          }
+          logger.error(`Failed to place sell order for ${symbol} after ${maxAttempts} attempts`);
+          return null;
+        }
+
+        // If execution details are missing, query the order to get fill information
+        if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
+          logger.info(
+            `Initial response missing execution details, querying order ${orderResponse.orderId}`
+          );
+
+          // Wait a moment for order to fill
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
+          if (!orderDetails) {
+            lastError = 'Failed to query order details';
+            if (attempt < maxAttempts) {
+              const delay = 2000;
+              logger.warn(`Failed to query order details, retrying in ${delay}ms...`);
+              await new Promise((resolve) => setTimeout(resolve, delay));
+              continue;
+            }
+            logger.error(`Failed to query order details for ${symbol} after ${maxAttempts} attempts`);
+            return null;
+          }
+
+          if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
+            lastError = `Order not filled: status=${orderDetails.status}`;
+            logger.error(
+              `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
+              { orderDetails }
+            );
+            return null;
+          }
+
+          orderResponse = orderDetails;
+        }
+
+        const executedQty = new Decimal(orderResponse.executedQty);
+        const cumulativeQuoteQty = new Decimal(orderResponse.cummulativeQuoteQty);
+        const avgPrice = cumulativeQuoteQty.div(executedQty);
+
+        logger.info(`Sell order executed: ${symbol} at avg price ${avgPrice.toString()}`);
+
+        return avgPrice;
+      } catch (error) {
+        lastError = String(error);
+        if (attempt < maxAttempts) {
+          const delay = Math.min(2000 * attempt, 5000);
+          logger.warn(
+            `Error on sell attempt ${attempt}/${maxAttempts}: ${String(error)}, retrying in ${delay}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        logger.error(
+          `Failed to place market sell for ${symbol} after ${maxAttempts} attempts. Last error: ${lastError}`
+        );
         return null;
       }
-
-      // If execution details are missing, query the order to get fill information
-      if (!orderResponse.executedQty || !orderResponse.cummulativeQuoteQty) {
-        logger.info(`Initial response missing execution details, querying order ${orderResponse.orderId}`);
-
-        // Wait a moment for order to fill
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        const orderDetails = await this.api.getOrder(symbol, orderResponse.orderId);
-        if (!orderDetails) {
-          logger.error(`Failed to query order details for ${symbol}`);
-          return null;
-        }
-
-        if (!orderDetails.executedQty || !orderDetails.cummulativeQuoteQty) {
-          logger.error(
-            `Order ${orderResponse.orderId} not filled: status=${orderDetails.status}`,
-            { orderDetails }
-          );
-          return null;
-        }
-
-        orderResponse = orderDetails;
-      }
-
-      const executedQty = new Decimal(orderResponse.executedQty);
-      const cumulativeQuoteQty = new Decimal(orderResponse.cummulativeQuoteQty);
-      const avgPrice = cumulativeQuoteQty.div(executedQty);
-
-      logger.info(`Sell order executed: ${symbol} at avg price ${avgPrice.toString()}`);
-
-      return avgPrice;
-    } catch (error) {
-      logger.error(`Error placing market sell for ${symbol}: ${String(error)}`);
-      return null;
     }
+
+    // Should never reach here, but just in case
+    logger.error(`Sell order failed after all retry attempts for ${symbol}. Last error: ${lastError}`);
+    return null;
   }
 
   /**
    * Start monitoring a trade with trailing stop-loss
    */
   async startMonitoring(symbol: MarketSymbol, buyPrice: Decimal, quantity: Decimal): Promise<void> {
+    // Prevent duplicate monitoring tasks
+    if (this.monitoringTasks.has(symbol)) {
+      logger.warn(`Already monitoring ${symbol}, skipping duplicate startMonitoring call`);
+      return;
+    }
+
     // Initialize trade state
     const stopLossPrice = buyPrice.mul(new Decimal(1).minus(this.config.stopLossPct.div(100)));
     const trailingStopPrice = buyPrice.mul(new Decimal(1).minus(this.config.trailingPct.div(100)));
@@ -333,15 +424,20 @@ export class TradeManager {
 
     // Get symbol precision and round quantity
     const precision = await this.api.getSymbolPrecision(symbol);
+    let roundedQuantity: Decimal;
+
     if (precision === null) {
-      logger.error(`Cannot get precision for ${symbol}, using stored quantity as-is`);
-      return;
+      logger.warn(
+        `Cannot get precision for ${symbol}, attempting sell with full quantity (exchange may reject)`
+      );
+      roundedQuantity = trade.quantity;
+    } else {
+      // Round quantity to the correct decimal places
+      roundedQuantity = trade.quantity.toDecimalPlaces(precision, Decimal.ROUND_DOWN);
+      logger.info(
+        `Selling ${symbol}: quantity ${trade.quantity.toString()} rounded to ${roundedQuantity.toString()} (precision: ${precision})`
+      );
     }
-
-    // Round quantity to the correct decimal places
-    const roundedQuantity = trade.quantity.toDecimalPlaces(precision, Decimal.ROUND_DOWN);
-
-    logger.info(`Selling ${symbol}: quantity ${trade.quantity.toString()} rounded to ${roundedQuantity.toString()} (precision: ${precision})`);
 
     const sellPrice = await this.placeMarketSell(symbol, roundedQuantity);
     if (!sellPrice) {
