@@ -45,6 +45,7 @@ export class MexcAPI {
   private readonly client: AxiosInstance;
   private readonly rateLimiter: RateLimiter;
   private symbolPrecisionCache = new Map<string, number>();
+  private timeOffset = 0; // Difference: serverTime - localTime
 
   constructor(config: MexcConfig) {
     this.config = config;
@@ -57,6 +58,37 @@ export class MexcAPI {
         'Content-Type': 'application/json',
       },
     });
+  }
+
+  /**
+   * Sync time with MEXC server to prevent timestamp errors
+   * Call this once at startup
+   */
+  async syncTime(): Promise<void> {
+    const localBefore = Date.now();
+    const serverTime = await this.getServerTime();
+    const localAfter = Date.now();
+
+    if (serverTime !== null) {
+      // Account for network latency by averaging
+      const localTime = Math.floor((localBefore + localAfter) / 2);
+      this.timeOffset = serverTime - localTime;
+
+      if (Math.abs(this.timeOffset) > 1000) {
+        logger.warn(`System clock offset detected: ${this.timeOffset}ms. Adjusting timestamps.`);
+      } else {
+        logger.info(`Time synchronized with MEXC server (offset: ${this.timeOffset}ms)`);
+      }
+    } else {
+      logger.error('Failed to sync time with MEXC server. Timestamps may be unreliable.');
+    }
+  }
+
+  /**
+   * Get current timestamp adjusted for server offset
+   */
+  private getAdjustedTimestamp(): number {
+    return Date.now() + this.timeOffset;
   }
 
   /**
@@ -89,7 +121,7 @@ export class MexcAPI {
 
       // Add timestamp and recvWindow for authenticated requests
       if (authenticated) {
-        params.timestamp = Date.now();
+        params.timestamp = this.getAdjustedTimestamp();
         params.recvWindow = this.config.receiveWindow;
 
         // Create query string and sign it (params must be in insertion order, NOT sorted)

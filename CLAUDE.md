@@ -200,6 +200,99 @@ To manually test new listing detection without waiting:
 3. **Check for `null` returns from API calls** - MEXC API wrapper returns `null` on errors
 4. **Handle AbortController signals** - Monitoring tasks must respect abort signals for clean shutdown
 5. **Wait for `saveActiveTrades()` to complete** - Don't exit process before persistence completes
+6. **UI requires API server** - The dashboard won't load without the API server running on port 3001
+
+## Debugging UI Issues
+
+**If you see a blank page or connection errors in the browser:**
+
+1. **Check what's running first** (before looking at code):
+   ```bash
+   # Windows
+   netstat -ano | findstr :3001
+   netstat -ano | findstr :5173
+
+   # macOS/Linux
+   lsof -i :3001
+   lsof -i :5173
+   ```
+
+2. **Test API health directly**:
+   ```bash
+   curl http://localhost:3001/api/health
+   ```
+
+3. **Check TypeScript compilation**:
+   ```bash
+   npm run build        # Backend
+   cd ui && npm run build   # Frontend
+   ```
+
+4. **Use the right workflow**:
+   - ✅ `npm run dev:all` - Runs everything (bot + API + UI)
+   - ✅ `npm run server` (terminal 1) + `npm run ui:dev` (terminal 2)
+   - ❌ `npm run ui:dev` alone - **WILL FAIL** (no API server)
+
+**Common TypeScript Errors:**
+- `"must be imported using a type-only import"` → Use `import type { ... }` for types
+- `"declared but never read"` → Remove unused imports or prefix params with `_`
+
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for detailed debugging guide.
+
+## UI Development Workflow (for Claude Code)
+
+When working on UI fixes or features, follow this process to avoid repeated failed attempts:
+
+### Step 1: Diagnosis
+- **ALWAYS** read the actual file showing the error first
+- Search for related code to understand context
+- Show what was found: "ApiResponse is NOT exported on line 43"
+- Never guess or assume - verify the actual state
+
+### Step 2: Propose Fix
+- Show the exact change with line numbers: "Line 43: `type ApiResponse` → `export type ApiResponse`"
+- Explain why: "Vite can't find the export because it's missing the export keyword"
+- Ask for approval before making changes
+
+### Step 3: Verify Fix Before Claiming Success
+- **ALWAYS** run `cd ui && npm run build` to catch TypeScript errors
+- If build passes: "Build successful, but restart Vite for type changes"
+- If build fails: "Build failed with [error], trying different approach"
+- **NEVER** say "it's resolved" without build verification
+
+### Step 4: Provide Testing Instructions
+- Explicitly tell user to restart dev server: "Kill and restart (Ctrl+C, then npm run ui:dev)"
+- Tell user to hard refresh browser: "Ctrl+Shift+R to clear module cache"
+- Explain that Vite HMR often fails for type changes
+- Ask: "Do you still see the error?"
+
+### Step 5: If Still Broken
+- Ask for the EXACT new error message (don't assume)
+- If same error: check if Vite restarted, check browser cache
+- If different error: "Progress! Now fixing [new error]"
+- If stuck after 3 attempts: "I might be missing something. Can you share a screenshot or full console output?"
+
+### Key Principles
+- ✅ ALWAYS run `npm run build` before claiming success
+- ✅ ALWAYS show exact changes with line numbers
+- ✅ ALWAYS provide restart/refresh instructions for type/import changes
+- ✅ NEVER claim certainty when guessing
+- ✅ Acknowledge when visual verification is needed (Claude cannot see browser)
+- ✅ If same fix attempted twice, stop and ask for more information
+
+### Understanding the Feedback Loop
+
+Claude Code cannot:
+- See the browser or visual rendering
+- Run dev servers or verify runtime behavior
+- Clear caches or restart processes
+- Know if a fix worked without user confirmation
+
+Therefore:
+- Build verification (`npm run build`) is the only automated feedback loop
+- Visual/CSS issues require user verification
+- Cache/HMR issues need explicit restart instructions
+- Repeated failures indicate missing information, not code complexity
 
 ## Node.js Version
 

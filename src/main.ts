@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { MexcAPI } from './api/mexc.js';
 import { MarketTracker } from './market/tracker.js';
 import { TradeManager } from './trade/manager.js';
+import { ListingScheduler } from './scheduler/listing-scheduler.js';
 import { logger } from './utils/logger.js';
 import { MarketSymbol } from './types.js';
 import Decimal from 'decimal.js';
@@ -12,6 +13,7 @@ import Decimal from 'decimal.js';
 class TradingBot {
   private running = true;
   private previousMarkets: string[] = [];
+  private scheduler: ListingScheduler;
 
   constructor(
     private readonly api: MexcAPI,
@@ -19,6 +21,7 @@ class TradingBot {
     private readonly tradeManager: TradeManager,
     private readonly config: ReturnType<typeof loadConfig>
   ) {
+    this.scheduler = new ListingScheduler();
     this.setupSignalHandlers();
   }
 
@@ -47,6 +50,7 @@ class TradingBot {
     logger.info('Shutting down bot');
 
     await this.tradeManager.shutdown();
+    this.scheduler.cleanup();
 
     if (this.previousMarkets.length > 0) {
       await this.marketTracker.savePreviousMarkets(this.previousMarkets);
@@ -71,8 +75,16 @@ class TradingBot {
     console.log(`💱 Quote currency: ${this.config.trading.quoteCurrency}`);
     console.log('-'.repeat(60));
 
-    // Restore any previously active trades
+    // Initialize scheduler and restore any previously active trades
+    await this.scheduler.initialize();
     await this.tradeManager.restoreMonitoring();
+
+    // Show next scheduled listing if any
+    const nextListing = this.scheduler.getNextListing();
+    if (nextListing) {
+      const timeStr = new Date(nextListing.listingTime).toLocaleString();
+      console.log(`⏰ Next scheduled listing: ${nextListing.symbol} at ${timeStr}`);
+    }
 
     // Load previous markets
     this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
@@ -106,6 +118,9 @@ class TradingBot {
         // Reload previous markets from disk (detect manual changes)
         const oldPreviousMarkets = this.previousMarkets;
         this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
+
+        // Reload scheduled listings from disk (detect new listings added via API)
+        await this.scheduler.initialize();
 
         if (
           new Set(oldPreviousMarkets).size !== new Set(this.previousMarkets).size ||
@@ -148,11 +163,37 @@ class TradingBot {
 
         // Process new listings
         for (const market of newListings) {
+          // Check if this was a scheduled listing before processing
+          const scheduledListings = this.scheduler.getScheduledListings();
+          const matchedListing = scheduledListings.find(
+            l => l.symbol === market && (l.status === 'active' || l.status === 'pending')
+          );
+          
+          if (matchedListing) {
+            console.log(`🎯 SCHEDULED LISTING DETECTED: ${market} - executing precision trade!`);
+            await this.scheduler.markListingTraded(market, matchedListing.listingTime);
+          }
+          
           await this.handleNewListing(market);
         }
 
-        // Sleep until next check
-        await this.sleep(this.config.trading.checkInterval * 1000);
+        // Use ultra-fast polling if near a scheduled listing, otherwise normal polling
+        const isUltraFastMode = this.scheduler.shouldUseUltraFastPolling();
+        const sleepInterval = isUltraFastMode 
+          ? this.scheduler.getUltraFastInterval()
+          : this.config.trading.checkInterval * 1000;
+        
+        // Log when entering/exiting ultra-fast mode
+        if (isUltraFastMode && scanCount % 50 === 1) {
+          const nextListing = this.scheduler.getNextListing();
+          if (nextListing) {
+            const timeUntil = new Date(nextListing.listingTime).getTime() - Date.now();
+            const secondsUntil = Math.round(timeUntil / 1000);
+            console.log(`🔥 ULTRA-FAST MODE: ${nextListing.symbol} listing in ~${secondsUntil}s (polling every ${sleepInterval}ms)`);
+          }
+        }
+        
+        await this.sleep(sleepInterval);
       } catch (error) {
         console.log(`🚨 ERROR in main loop: ${String(error)}`);
         logger.error(`Error in main loop: ${String(error)}`);
@@ -269,6 +310,9 @@ async function main(): Promise<void> {
     }
 
     console.log('✅ Connected to MEXC API');
+
+    // Sync time with MEXC server to prevent timestamp errors
+    await api.syncTime();
 
     // Initialize components
     const marketTracker = new MarketTracker(api, config.trading.quoteCurrency);
