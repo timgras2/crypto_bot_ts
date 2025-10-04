@@ -27,7 +27,8 @@ export async function loadJson<T>(filename: string, defaultValue: T): Promise<T>
     return JSON.parse(data) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      logger.info(`File ${filename} not found, using default value`);
+      logger.info(`File ${filename} not found, creating with default value`);
+      await saveJson(filename, defaultValue);
       return defaultValue;
     }
     logger.error(`Error loading ${filename}: ${String(error)}`);
