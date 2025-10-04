@@ -263,6 +263,24 @@ class TradingBot {
 
     if (buyResult) {
       console.log(`✅ BUY SUCCESS: ${market} at ${buyResult.avgPrice.toString()} USDT (qty: ${buyResult.quantity.toString()})`);
+
+      // Check for slippage if ticker data is available
+      if (ticker) {
+        const tickerPrice = new Decimal(ticker.lastPrice);
+        const executionPrice = buyResult.avgPrice;
+        const slippage = executionPrice.minus(tickerPrice).div(tickerPrice).mul(100);
+
+        if (slippage.abs().gt(5)) {
+          const slippageStr = slippage.toFixed(2);
+          logger.warn(`High slippage detected on ${market}: ${slippageStr}%`);
+          console.log(
+            `⚠️  Slippage: ${slippageStr}% (ticker: ${tickerPrice.toString()}, executed: ${executionPrice.toString()})`
+          );
+        } else {
+          logger.info(`Slippage on ${market}: ${slippage.toFixed(2)}%`);
+        }
+      }
+
       console.log(`🎯 Starting monitoring with trailing stop-loss...`);
       await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity);
     } else {
@@ -313,6 +331,18 @@ async function main(): Promise<void> {
 
     // Sync time with MEXC server to prevent timestamp errors
     await api.syncTime();
+
+    // Validate API credentials by attempting an authenticated request
+    console.log('🔐 Validating API credentials...');
+    const accountInfo = await api.getAccount();
+    if (!accountInfo) {
+      throw new Error(
+        'Failed to authenticate with MEXC API.\n' +
+        'Please check your MEXC_API_KEY and MEXC_API_SECRET in .env file.\n' +
+        'Make sure the API key has spot trading permissions enabled.'
+      );
+    }
+    console.log('✅ API credentials validated successfully');
 
     // Initialize components
     const marketTracker = new MarketTracker(api, config.trading.quoteCurrency);
