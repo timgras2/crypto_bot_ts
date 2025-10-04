@@ -1,8 +1,6 @@
-import { Link } from 'react-router-dom';
 import { StatsCard } from './StatsCard';
 import { ActiveTradesTable } from './ActiveTradesTable';
 import { CompletedTradesTable } from './CompletedTradesTable';
-import UpcomingListingsCard from './UpcomingListingsCard';
 import { useActiveTrades } from '../hooks/useActiveTrades';
 import { useCompletedTrades } from '../hooks/useCompletedTrades';
 import { useStats } from '../hooks/useStats';
@@ -71,7 +69,7 @@ export function Dashboard() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatsCard
             title="Total P&L"
             value={`${totalPnL > 0 ? '+' : ''}${totalPnL.toFixed(2)}%`}
@@ -96,17 +94,6 @@ export function Dashboard() {
             subtitle={`Avg P&L: ${stats?.avgProfitLossPct || '0.00'}%`}
             trend="neutral"
           />
-          <div className="md:col-span-1">
-            <Link to="/scheduled" className="block group">
-              <div className="h-full relative">
-                <UpcomingListingsCard />
-                <div className="absolute inset-0 bg-blue-600/10 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg pointer-events-none"></div>
-                <div className="absolute bottom-2 right-2 text-xs text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                  Click to manage →
-                </div>
-              </div>
-            </Link>
-          </div>
         </div>
 
         {/* Active Trades */}
