@@ -77,6 +77,23 @@ class TradingBot {
 
     // Initialize scheduler and restore any previously active trades
     await this.scheduler.initialize();
+
+    // Register trade executor for scheduled listings
+    this.scheduler.setTradeExecutor(async (symbol: string, quoteCurrency: string) => {
+      const fullSymbol = `${symbol}${quoteCurrency}` as MarketSymbol;
+
+      // Verify symbol exists in current markets
+      const currentMarkets = await this.marketTracker.getCurrentMarkets();
+      if (!currentMarkets.includes(fullSymbol)) {
+        logger.debug(`Scheduled listing ${fullSymbol} not yet available in markets`);
+        return false; // Retry
+      }
+
+      // Execute the trade
+      await this.handleNewListing(fullSymbol);
+      return true; // Success
+    });
+
     await this.tradeManager.restoreMonitoring();
 
     // Show next scheduled listing if any
@@ -161,39 +178,13 @@ class TradingBot {
           }
         }
 
-        // Process new listings
+        // Process naturally detected new listings
         for (const market of newListings) {
-          // Check if this was a scheduled listing before processing
-          const scheduledListings = this.scheduler.getScheduledListings();
-          const matchedListing = scheduledListings.find(
-            l => l.symbol === market && (l.status === 'active' || l.status === 'pending')
-          );
-          
-          if (matchedListing) {
-            console.log(`🎯 SCHEDULED LISTING DETECTED: ${market} - executing precision trade!`);
-            await this.scheduler.markListingTraded(market, matchedListing.listingTime);
-          }
-          
           await this.handleNewListing(market);
         }
 
-        // Use ultra-fast polling if near a scheduled listing, otherwise normal polling
-        const isUltraFastMode = this.scheduler.shouldUseUltraFastPolling();
-        const sleepInterval = isUltraFastMode 
-          ? this.scheduler.getUltraFastInterval()
-          : this.config.trading.checkInterval * 1000;
-        
-        // Log when entering/exiting ultra-fast mode
-        if (isUltraFastMode && scanCount % 50 === 1) {
-          const nextListing = this.scheduler.getNextListing();
-          if (nextListing) {
-            const timeUntil = new Date(nextListing.listingTime).getTime() - Date.now();
-            const secondsUntil = Math.round(timeUntil / 1000);
-            console.log(`🔥 ULTRA-FAST MODE: ${nextListing.symbol} listing in ~${secondsUntil}s (polling every ${sleepInterval}ms)`);
-          }
-        }
-        
-        await this.sleep(sleepInterval);
+        // Normal polling interval (scheduled listings are handled by timers)
+        await this.sleep(this.config.trading.checkInterval * 1000);
       } catch (error) {
         console.log(`🚨 ERROR in main loop: ${String(error)}`);
         logger.error(`Error in main loop: ${String(error)}`);

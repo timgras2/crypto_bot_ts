@@ -33,8 +33,8 @@ export function ScheduledListingsPage() {
           </h3>
           <ul className="text-sm text-blue-700 dark:text-blue-400 space-y-1">
             <li>• Schedule upcoming token listings with exact times from <a href="https://www.mexc.com/newlisting" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-600 dark:hover:text-blue-300">MEXC announcements</a></li>
-            <li>• Bot switches to ultra-fast polling (250ms) 30 seconds before listing time</li>
-            <li>• Automatically executes trade when the market becomes available</li>
+            <li>• Bot executes trade at the exact scheduled time (retries every 100ms for up to 60s)</li>
+            <li>• Automatically places buy order as soon as the market becomes tradeable</li>
             <li>• Uses your configured trade amount and trailing stop-loss settings</li>
           </ul>
         </div>

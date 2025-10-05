@@ -130,7 +130,7 @@ const ScheduledListingsTable: React.FC = () => {
                 const isRemoving = removingIds.has(listingId);
 
                 return (
-                  <tr key={listingId} className='border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750'>
+                  <tr key={listingId} className='border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'>
                     <td className='p-3'>
                       <span className={`flex items-center gap-2 ${getStatusColor(listing.status)}`}>
                         <span>{getStatusIcon(listing.status)}</span>

@@ -20,10 +20,15 @@ export interface ScheduledListing {
  * Configuration for the listing scheduler
  */
 export interface SchedulerConfig {
-  preActivationBuffer: number; // Start ultra-fast polling X seconds before listing
-  ultraFastInterval: number; // Polling interval in milliseconds during active window
   maxWaitAfterListing: number; // Stop trying after X seconds past listing time
+  retryInterval: number; // Retry interval in milliseconds if trade fails
 }
+
+/**
+ * Callback function type for executing trades
+ * Returns true if trade was successful, false if should retry
+ */
+export type TradeExecutor = (symbol: string, quoteCurrency: string) => Promise<boolean>;
 
 /**
  * Manages scheduled listings and precise timing for trading at listing moments
@@ -32,14 +37,21 @@ export class ListingScheduler {
   private scheduledListings: ScheduledListing[] = [];
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private lastLoggedCount = -1; // Track last logged count to prevent spam
+  private tradeExecutor?: TradeExecutor; // Callback for executing trades
 
   constructor(
     private readonly config: SchedulerConfig = {
-      preActivationBuffer: 30, // Start fast polling 30s before
-      ultraFastInterval: 100, // Poll every 100ms when active
       maxWaitAfterListing: 60, // Stop trying after 60s
+      retryInterval: 100, // Retry every 100ms
     }
   ) {}
+
+  /**
+   * Register a callback function to execute trades when listing time arrives
+   */
+  setTradeExecutor(executor: TradeExecutor): void {
+    this.tradeExecutor = executor;
+  }
 
   /**
    * Load scheduled listings from disk
@@ -156,30 +168,6 @@ export class ListingScheduler {
     );
   }
 
-  /**
-   * Check if we should enter ultra-fast polling mode
-   */
-  shouldUseUltraFastPolling(): boolean {
-    const now = new Date();
-    const buffer = this.config.preActivationBuffer * 1000;
-    
-    return this.scheduledListings.some(listing => {
-      if (listing.status !== 'pending') return false;
-      
-      const listingTime = new Date(listing.listingTime);
-      const activationTime = new Date(listingTime.getTime() - buffer);
-      const endTime = new Date(listingTime.getTime() + this.config.maxWaitAfterListing * 1000);
-      
-      return now >= activationTime && now <= endTime;
-    });
-  }
-
-  /**
-   * Get the ultra-fast polling interval (in ms)
-   */
-  getUltraFastInterval(): number {
-    return this.config.ultraFastInterval;
-  }
 
   /**
    * Mark a listing as traded
@@ -230,42 +218,87 @@ export class ListingScheduler {
       return; // Timer already set, skip
     }
 
-    // Skip if listing time has passed
+    // If listing time has passed, check if we're still in the wait window
     if (listingTime <= now) {
-      logger.warn(`Listing time for ${listing.symbol} has already passed`);
+      const maxWaitTime = new Date(listingTime.getTime() + this.config.maxWaitAfterListing * 1000);
+      if (now <= maxWaitTime) {
+        // Still within wait window - execute immediately
+        logger.info(`${listing.symbol} listing time passed but within wait window - executing now`);
+        void this.executeScheduledTrade(listing);
+      } else {
+        logger.warn(`Listing time for ${listing.symbol} has already passed`);
+      }
       return;
     }
 
-    // Calculate time until activation (start ultra-fast polling)
-    const activationTime = new Date(listingTime.getTime() - this.config.preActivationBuffer * 1000);
-    const timeUntilActivation = activationTime.getTime() - now.getTime();
+    // Calculate time until listing
+    const timeUntilListing = listingTime.getTime() - now.getTime();
 
-    if (timeUntilActivation <= 0) {
-      // Already in activation window
-      listing.status = 'active';
-      console.log(`🔥 ${listing.symbol} is now in ultra-fast polling window!`);
-    } else {
-      // Set timer for activation
-      const timer = setTimeout(() => {
-        listing.status = 'active';
-        console.log(`🔥 ${listing.symbol} entering ultra-fast polling mode! Listing in ${this.config.preActivationBuffer}s`);
-        this.activeTimers.delete(timerId);
+    // Set timer to execute trade at exact listing time
+    const timer = setTimeout(() => {
+      console.log(`⏰ ${listing.symbol} listing time reached - executing trade!`);
+      this.activeTimers.delete(timerId);
+      void this.executeScheduledTrade(listing);
+    }, timeUntilListing);
 
-        // Set timeout to mark as missed if not completed
-        const missedTimer = setTimeout(async () => {
-          if (listing.status === 'active') {
-            await this.markListingMissed(listing.symbol, listing.listingTime);
-          }
-        }, (this.config.preActivationBuffer + this.config.maxWaitAfterListing) * 1000);
+    this.activeTimers.set(timerId, timer);
 
-        this.activeTimers.set(timerId + '-missed', missedTimer);
-      }, timeUntilActivation);
+    const listingTimeStr = listingTime.toLocaleString();
+    logger.info(`Set timer for ${listing.symbol} - will execute at ${listingTimeStr}`);
+    console.log(`⏰ Timer set for ${listing.symbol} at ${listingTimeStr}`);
+  }
 
-      this.activeTimers.set(timerId, timer);
-
-      const activationTimeStr = activationTime.toLocaleString();
-      logger.info(`Set timer for ${listing.symbol} - ultra-fast polling starts at ${activationTimeStr}`);
+  /**
+   * Execute a scheduled trade with retry logic
+   */
+  private async executeScheduledTrade(listing: ScheduledListing): Promise<void> {
+    if (!this.tradeExecutor) {
+      logger.error(`Cannot execute trade for ${listing.symbol} - no trade executor registered`);
+      await this.markListingMissed(listing.symbol, listing.listingTime);
+      return;
     }
+
+    listing.status = 'active';
+    const startTime = Date.now();
+    const maxDuration = this.config.maxWaitAfterListing * 1000;
+    let attempts = 0;
+
+    console.log(`🎯 Executing scheduled trade: ${listing.symbol}${listing.quoteCurrency}`);
+
+    while (Date.now() - startTime < maxDuration) {
+      attempts++;
+
+      try {
+        const success = await this.tradeExecutor(listing.symbol, listing.quoteCurrency);
+
+        if (success) {
+          await this.markListingTraded(listing.symbol, listing.listingTime);
+          logger.info(`Successfully executed scheduled trade for ${listing.symbol} after ${attempts} attempts`);
+          return;
+        }
+
+        // Trade failed, retry after interval
+        if (attempts === 1) {
+          console.log(`⏳ Trade attempt failed, retrying every ${this.config.retryInterval}ms...`);
+        }
+
+        await this.sleep(this.config.retryInterval);
+      } catch (error) {
+        logger.error(`Error executing trade for ${listing.symbol}: ${String(error)}`);
+        await this.sleep(this.config.retryInterval);
+      }
+    }
+
+    // Exceeded max wait time
+    await this.markListingMissed(listing.symbol, listing.listingTime);
+    logger.warn(`Failed to execute ${listing.symbol} after ${attempts} attempts over ${this.config.maxWaitAfterListing}s`);
+  }
+
+  /**
+   * Sleep helper
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**

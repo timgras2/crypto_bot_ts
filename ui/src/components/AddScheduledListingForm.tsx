@@ -152,7 +152,7 @@ const AddScheduledListingForm: React.FC = () => {
 
         <div className='flex justify-between items-center pt-2'>
           <div className='text-xs text-gray-600 dark:text-gray-400'>
-            💡 Bot will switch to ultra-fast polling 30 seconds before listing
+            💡 Bot will execute trade at exact listing time (retries every 100ms for 60s)
           </div>
           <button
             type='submit'
