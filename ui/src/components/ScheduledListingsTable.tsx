@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { TrashIcon } from '@heroicons/react/24/outline';
 import { useScheduledListings } from '../hooks/useScheduledListings';
 import type { ScheduledListing } from '../types';
 
@@ -153,20 +154,14 @@ const ScheduledListingsTable: React.FC = () => {
                       {listing.notes || '-'}
                     </td>
                     <td className='p-3'>
-                      {listing.status === 'pending' && (
-                        <button
-                          onClick={() => handleRemove(listing)}
-                          disabled={isRemoving}
-                          className='text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 disabled:text-gray-400 dark:disabled:text-gray-500 text-xs'
-                        >
-                          {isRemoving ? 'Removing...' : 'Remove'}
-                        </button>
-                      )}
-                      {listing.status === 'completed' && listing.tradedAt && (
-                        <span className='text-green-600 dark:text-green-400 text-xs'>
-                          Traded {formatDateTime(listing.tradedAt)}
-                        </span>
-                      )}
+                      <button
+                        onClick={() => handleRemove(listing)}
+                        disabled={isRemoving}
+                        className='text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity'
+                        title={isRemoving ? 'Removing...' : 'Remove listing'}
+                      >
+                        <TrashIcon className='w-5 h-5' />
+                      </button>
                     </td>
                   </tr>
                 );

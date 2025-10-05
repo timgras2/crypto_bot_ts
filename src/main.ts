@@ -75,7 +75,7 @@ class TradingBot {
     console.log(`💱 Quote currency: ${this.config.trading.quoteCurrency}`);
     console.log('-'.repeat(60));
 
-    // Initialize scheduler and restore any previously active trades
+    // Initialize scheduler once on startup
     await this.scheduler.initialize();
 
     // Register trade executor for scheduled listings
@@ -136,8 +136,12 @@ class TradingBot {
         const oldPreviousMarkets = this.previousMarkets;
         this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
 
-        // Reload scheduled listings from disk (detect new listings added via API)
-        await this.scheduler.initialize();
+        // Check if scheduled listings file changed (only reload if modified)
+        const schedulerNeedsReload = await this.scheduler.checkForChanges();
+        if (schedulerNeedsReload) {
+          logger.info('Scheduled listings file changed, reloading...');
+          await this.scheduler.initialize();
+        }
 
         if (
           new Set(oldPreviousMarkets).size !== new Set(this.previousMarkets).size ||

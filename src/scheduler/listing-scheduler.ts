@@ -1,7 +1,10 @@
 import { logger } from '../utils/logger.js';
 import { loadJson, saveJson } from '../utils/persistence.js';
+import fs from 'fs/promises';
+import path from 'path';
 
 const SCHEDULED_LISTINGS_FILE = 'scheduled_listings.json';
+const DATA_DIR = 'data';
 
 /**
  * Represents a scheduled listing with precise timing
@@ -38,10 +41,11 @@ export class ListingScheduler {
   private activeTimers = new Map<string, NodeJS.Timeout>();
   private lastLoggedCount = -1; // Track last logged count to prevent spam
   private tradeExecutor?: TradeExecutor; // Callback for executing trades
+  private lastFileModTime: number = 0; // Track file modification time
 
   constructor(
     private readonly config: SchedulerConfig = {
-      maxWaitAfterListing: 60, // Stop trying after 60s
+      maxWaitAfterListing: 180, // Stop trying after 3 minutes (extended from 60s)
       retryInterval: 100, // Retry every 100ms
     }
   ) {}
@@ -223,19 +227,25 @@ export class ListingScheduler {
       const maxWaitTime = new Date(listingTime.getTime() + this.config.maxWaitAfterListing * 1000);
       if (now <= maxWaitTime) {
         // Still within wait window - execute immediately
-        logger.info(`${listing.symbol} listing time passed but within wait window - executing now`);
+        logger.info(`${listing.symbol} listing time passed but within wait window (${Math.floor((now.getTime() - listingTime.getTime()) / 1000)}s late) - executing now`);
         void this.executeScheduledTrade(listing);
       } else {
-        logger.warn(`Listing time for ${listing.symbol} has already passed`);
+        // Outside grace period - mark as missed immediately to prevent spam
+        const secondsLate = Math.floor((now.getTime() - listingTime.getTime()) / 1000);
+        logger.warn(`Listing time for ${listing.symbol} has passed outside grace period (${secondsLate}s late, max ${this.config.maxWaitAfterListing}s) - marking as missed`);
+        void this.markListingMissed(listing.symbol, listing.listingTime);
       }
       return;
     }
 
     // Calculate time until listing
     const timeUntilListing = listingTime.getTime() - now.getTime();
+    const hoursUntil = Math.floor(timeUntilListing / 3600000);
+    const minutesUntil = Math.floor((timeUntilListing % 3600000) / 60000);
 
     // Set timer to execute trade at exact listing time
     const timer = setTimeout(() => {
+      logger.info(`⏰ Timer FIRED for ${listing.symbol} - executing scheduled trade now`);
       console.log(`⏰ ${listing.symbol} listing time reached - executing trade!`);
       this.activeTimers.delete(timerId);
       void this.executeScheduledTrade(listing);
@@ -244,8 +254,12 @@ export class ListingScheduler {
     this.activeTimers.set(timerId, timer);
 
     const listingTimeStr = listingTime.toLocaleString();
-    logger.info(`Set timer for ${listing.symbol} - will execute at ${listingTimeStr}`);
-    console.log(`⏰ Timer set for ${listing.symbol} at ${listingTimeStr}`);
+    const timeUntilStr = hoursUntil > 0
+      ? `${hoursUntil}h ${minutesUntil}m`
+      : `${minutesUntil}m`;
+
+    logger.info(`✅ Timer SET for ${listing.symbol} - will execute at ${listingTimeStr} (in ${timeUntilStr})`);
+    console.log(`⏰ Timer set for ${listing.symbol} at ${listingTimeStr} (in ${timeUntilStr})`);
   }
 
   /**
@@ -263,6 +277,7 @@ export class ListingScheduler {
     const maxDuration = this.config.maxWaitAfterListing * 1000;
     let attempts = 0;
 
+    logger.info(`🎯 Starting scheduled trade execution for ${listing.symbol}${listing.quoteCurrency} (max wait: ${this.config.maxWaitAfterListing}s)`);
     console.log(`🎯 Executing scheduled trade: ${listing.symbol}${listing.quoteCurrency}`);
 
     while (Date.now() - startTime < maxDuration) {
@@ -272,26 +287,29 @@ export class ListingScheduler {
         const success = await this.tradeExecutor(listing.symbol, listing.quoteCurrency);
 
         if (success) {
+          const duration = ((Date.now() - startTime) / 1000).toFixed(1);
           await this.markListingTraded(listing.symbol, listing.listingTime);
-          logger.info(`Successfully executed scheduled trade for ${listing.symbol} after ${attempts} attempts`);
+          logger.info(`✅ Successfully executed scheduled trade for ${listing.symbol} after ${attempts} attempts in ${duration}s`);
           return;
         }
 
         // Trade failed, retry after interval
         if (attempts === 1) {
+          logger.info(`Market not yet available, retrying every ${this.config.retryInterval}ms...`);
           console.log(`⏳ Trade attempt failed, retrying every ${this.config.retryInterval}ms...`);
         }
 
         await this.sleep(this.config.retryInterval);
       } catch (error) {
-        logger.error(`Error executing trade for ${listing.symbol}: ${String(error)}`);
+        logger.error(`Error executing trade for ${listing.symbol} (attempt ${attempts}): ${String(error)}`);
         await this.sleep(this.config.retryInterval);
       }
     }
 
     // Exceeded max wait time
+    const duration = ((Date.now() - startTime) / 1000).toFixed(1);
     await this.markListingMissed(listing.symbol, listing.listingTime);
-    logger.warn(`Failed to execute ${listing.symbol} after ${attempts} attempts over ${this.config.maxWaitAfterListing}s`);
+    logger.warn(`❌ Failed to execute ${listing.symbol} after ${attempts} attempts over ${duration}s (max: ${this.config.maxWaitAfterListing}s)`);
   }
 
   /**
@@ -307,7 +325,7 @@ export class ListingScheduler {
   async initialize(): Promise<void> {
     await this.loadScheduledListings();
 
-    // Set up timers for all pending listings
+    // Set up timers ONLY for pending listings (skip completed/missed/active)
     const pendingListings = this.scheduledListings.filter(l => l.status === 'pending');
     for (const listing of pendingListings) {
       this.setupListingTimer(listing);
@@ -333,6 +351,11 @@ export class ListingScheduler {
    * Cleanup all active timers
    */
   cleanup(): void {
+    const timerCount = this.activeTimers.size;
+    if (timerCount > 0) {
+      logger.info(`Cleaning up ${timerCount} active timers`);
+    }
+
     for (const [timerId, timer] of this.activeTimers) {
       clearTimeout(timer);
       logger.debug(`Cleared timer: ${timerId}`);
@@ -349,5 +372,34 @@ export class ListingScheduler {
       .sort((a, b) => new Date(a.listingTime).getTime() - new Date(b.listingTime).getTime());
 
     return pendingListings[0] || null;
+  }
+
+  /**
+   * Check if scheduled listings file has changed since last check
+   * Returns true if file was modified, false otherwise
+   */
+  async checkForChanges(): Promise<boolean> {
+    try {
+      const filePath = path.join(DATA_DIR, SCHEDULED_LISTINGS_FILE);
+      const stats = await fs.stat(filePath);
+      const currentModTime = stats.mtimeMs;
+
+      if (this.lastFileModTime === 0) {
+        // First check, just store the time
+        this.lastFileModTime = currentModTime;
+        return false;
+      }
+
+      if (currentModTime > this.lastFileModTime) {
+        this.lastFileModTime = currentModTime;
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      // File doesn't exist or error reading it, treat as no change
+      logger.debug(`Error checking scheduled listings file: ${String(error)}`);
+      return false;
+    }
   }
 }
