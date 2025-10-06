@@ -49,11 +49,11 @@ export function calculateStats(completedTrades: CompletedTrade[]): TradingStats 
   let worstTrade: { symbol: string; lossPct: Decimal } | null = null;
 
   for (const trade of completedTrades) {
-    const profitLossUsdt = new Decimal(trade.profitLossUsdt);
+    const profitLossQuote = new Decimal(trade.profitLossQuote);
     const profitLossPct = new Decimal(trade.profitLossPct);
     const duration = new Decimal(trade.durationHours);
 
-    totalProfitLossUsdt = totalProfitLossUsdt.plus(profitLossUsdt);
+    totalProfitLossUsdt = totalProfitLossUsdt.plus(profitLossQuote);
     totalProfitLossPct = totalProfitLossPct.plus(profitLossPct);
     totalDurationHours = totalDurationHours.plus(duration);
 

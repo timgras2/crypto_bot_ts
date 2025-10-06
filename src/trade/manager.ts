@@ -34,6 +34,7 @@ export class TradeManager {
       market: trade.market,
       buyPrice: trade.buyPrice.toString(),
       quantity: trade.quantity.toString(),
+      investedQuote: trade.investedQuote.toString(),
       currentPrice: trade.currentPrice.toString(),
       highestPrice: trade.highestPrice.toString(),
       trailingStopPrice: trade.trailingStopPrice.toString(),
@@ -47,10 +48,16 @@ export class TradeManager {
    * Deserialize TradeState from JSON
    */
   private deserializeTrade(data: SerializedTradeState): TradeState {
+    // For backward compatibility: if investedQuote is missing, calculate from buyPrice * quantity
+    const investedQuote = data.investedQuote
+      ? new Decimal(data.investedQuote)
+      : new Decimal(data.buyPrice).mul(new Decimal(data.quantity));
+
     return {
       market: data.market as MarketSymbol,
       buyPrice: new Decimal(data.buyPrice),
       quantity: new Decimal(data.quantity),
+      investedQuote,
       currentPrice: new Decimal(data.currentPrice),
       highestPrice: new Decimal(data.highestPrice),
       trailingStopPrice: new Decimal(data.trailingStopPrice),
@@ -87,7 +94,7 @@ export class TradeManager {
       try {
         const trade = this.deserializeTrade(serialized);
         this.activeTrades.set(trade.market, trade);
-        await this.startMonitoring(trade.market, trade.buyPrice, trade.quantity);
+        await this.startMonitoring(trade.market, trade.buyPrice, trade.quantity, trade.investedQuote);
         logger.info(`Restored monitoring for ${trade.market}`);
       } catch (error) {
         logger.error(`Failed to restore trade for ${serialized.market}: ${String(error)}`);
@@ -102,7 +109,7 @@ export class TradeManager {
     symbol: MarketSymbol,
     amountUsdt: Decimal,
     maxAttempts: number = 3
-  ): Promise<{ avgPrice: Decimal; quantity: Decimal } | null> {
+  ): Promise<{ avgPrice: Decimal; quantity: Decimal; investedQuote: Decimal } | null> {
     let lastError: string = 'Unknown error';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -173,10 +180,10 @@ export class TradeManager {
         const avgPrice = cumulativeQuoteQty.div(executedQty);
 
         logger.info(
-          `Buy order executed: ${symbol} at avg price ${avgPrice.toString()} (qty: ${executedQty.toString()})`
+          `Buy order executed: ${symbol} at avg price ${avgPrice.toString()} (qty: ${executedQty.toString()}, invested: ${cumulativeQuoteQty.toString()} ${this.config.quoteCurrency})`
         );
 
-        return { avgPrice, quantity: executedQty };
+        return { avgPrice, quantity: executedQty, investedQuote: cumulativeQuoteQty };
       } catch (error) {
         lastError = String(error);
         if (attempt < maxAttempts) {
@@ -303,7 +310,7 @@ export class TradeManager {
   /**
    * Start monitoring a trade with trailing stop-loss
    */
-  async startMonitoring(symbol: MarketSymbol, buyPrice: Decimal, quantity: Decimal): Promise<void> {
+  async startMonitoring(symbol: MarketSymbol, buyPrice: Decimal, quantity: Decimal, investedQuote: Decimal): Promise<void> {
     // Prevent duplicate monitoring tasks
     if (this.monitoringTasks.has(symbol)) {
       logger.warn(`Already monitoring ${symbol}, skipping duplicate startMonitoring call`);
@@ -318,6 +325,7 @@ export class TradeManager {
       market: symbol,
       buyPrice,
       quantity,
+      investedQuote,
       currentPrice: buyPrice,
       highestPrice: buyPrice,
       trailingStopPrice,
@@ -468,7 +476,7 @@ export class TradeManager {
     if (!trade) return;
 
     const profitPct = sellPrice.minus(trade.buyPrice).div(trade.buyPrice).mul(100);
-    const profitUsdt = profitPct.div(100).mul(this.config.maxTradeAmount);
+    const profitQuote = profitPct.div(100).mul(trade.investedQuote);
     const duration = (Date.now() - trade.startTime.getTime()) / 3600000; // hours
 
     const completedTrade: CompletedTrade = {
@@ -476,7 +484,7 @@ export class TradeManager {
       sellPrice: sellPrice.toString(),
       sellTime: new Date().toISOString(),
       profitLossPct: profitPct.toFixed(2),
-      profitLossUsdt: profitUsdt.toFixed(4),
+      profitLossQuote: profitQuote.toFixed(4),
       triggerReason: reason,
       durationHours: duration.toFixed(1),
     };

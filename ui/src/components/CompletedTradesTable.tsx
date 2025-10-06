@@ -50,10 +50,13 @@ export function CompletedTradesTable({ trades }: CompletedTradesTableProps) {
                 Entry / Exit
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Invested
+              </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 P&L %
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                P&L USDT
+                P&L Amount
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                 Duration
@@ -82,6 +85,9 @@ export function CompletedTradesTable({ trades }: CompletedTradesTableProps) {
                       <span className="text-xs text-gray-400">Exit: {parseFloat(trade.sellPrice).toFixed(6)}</span>
                     </div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {parseFloat(trade.investedQuote).toFixed(2)}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
                     <span className={isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
                       {isProfit ? '+' : ''}{profitLoss.toFixed(2)}%
@@ -89,7 +95,7 @@ export function CompletedTradesTable({ trades }: CompletedTradesTableProps) {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <span className={isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
-                      {isProfit ? '+' : ''}{trade.profitLossUsdt}
+                      {isProfit ? '+' : ''}{trade.profitLossQuote}
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">

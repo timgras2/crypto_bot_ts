@@ -89,8 +89,8 @@ class TradingBot {
         return false; // Retry
       }
 
-      // Execute the trade
-      await this.handleNewListing(fullSymbol);
+      // Execute the trade with volume check disabled (scheduled listings have 0 volume at start)
+      await this.handleNewListing(fullSymbol, true);
       return true; // Success
     });
 
@@ -203,7 +203,7 @@ class TradingBot {
   /**
    * Handle a new listing detection
    */
-  private async handleNewListing(market: MarketSymbol): Promise<void> {
+  private async handleNewListing(market: MarketSymbol, skipVolumeCheck: boolean = false): Promise<void> {
     console.log(`\n🚨 NEW LISTING DETECTED: ${market}`);
     logger.info(`Attempting to trade new listing: ${market}`);
 
@@ -235,20 +235,26 @@ class TradingBot {
       tradeAmount = Decimal.min(this.config.trading.maxTradeAmount.mul(0.5), new Decimal(5));
       console.log(`🛡️  Using reduced amount ${tradeAmount.toString()} USDT for safety`);
     } else {
-      // Validate volume
+      // Show ticker data
       const volume = new Decimal(ticker.quoteVolume);
-      const minVolumeThreshold = this.config.trading.maxTradeAmount.mul(10);
-
       console.log(
         `📊 ${market} | Price: ${ticker.lastPrice} | Volume: ${volume.toString()} USDT`
       );
 
-      if (volume.lt(minVolumeThreshold)) {
-        console.log(
-          `⚠️  Volume too low (${volume.toString()} < ${minVolumeThreshold.toString()} USDT), skipping...`
-        );
-        logger.warn(`Skipping ${market} due to insufficient volume: ${volume.toString()}`);
-        return;
+      // Validate volume (skip for scheduled listings as they start with 0 volume)
+      if (!skipVolumeCheck) {
+        const minVolumeThreshold = this.config.trading.maxTradeAmount.mul(10);
+
+        if (volume.lt(minVolumeThreshold)) {
+          console.log(
+            `⚠️  Volume too low (${volume.toString()} < ${minVolumeThreshold.toString()} USDT), skipping...`
+          );
+          logger.warn(`Skipping ${market} due to insufficient volume: ${volume.toString()}`);
+          return;
+        }
+      } else {
+        console.log(`⏰ Scheduled listing - skipping volume check (listings start with 0 volume)`);
+        logger.info(`Scheduled listing ${market} - bypassing volume validation, using full trade amount`);
       }
     }
 
@@ -277,7 +283,7 @@ class TradingBot {
       }
 
       console.log(`🎯 Starting monitoring with trailing stop-loss...`);
-      await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity);
+      await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity, buyResult.investedQuote);
     } else {
       console.log(`❌ BUY FAILED: Could not execute order for ${market}`);
     }

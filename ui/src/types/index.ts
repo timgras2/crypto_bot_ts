@@ -3,6 +3,7 @@ export type SerializedTradeState = {
   market: string;
   buyPrice: string;
   quantity: string;
+  investedQuote: string;
   currentPrice: string;
   highestPrice: string;
   trailingStopPrice: string;
@@ -15,7 +16,7 @@ export type CompletedTrade = SerializedTradeState & {
   sellPrice: string;
   sellTime: string;
   profitLossPct: string;
-  profitLossUsdt: string;
+  profitLossQuote: string;
   triggerReason: 'stop_loss' | 'trailing_stop' | 'manual';
   durationHours: string;
 }
