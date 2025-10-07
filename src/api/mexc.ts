@@ -269,6 +269,26 @@ export class MexcAPI {
   }
 
   /**
+   * Get trade history for a symbol
+   */
+  async getMyTrades(symbol: string, limit: number = 500): Promise<Array<{
+    symbol: string;
+    id: string;
+    orderId: string;
+    price: string;
+    qty: string;
+    quoteQty: string;
+    commission: string;
+    commissionAsset: string;
+    time: number;
+    isBuyer: boolean;
+    isMaker: boolean;
+    isBestMatch: boolean;
+  }> | null> {
+    return this.request('GET', '/api/v3/myTrades', { symbol, limit }, true);
+  }
+
+  /**
    * Retry wrapper for critical operations
    */
   async withRetry<T>(

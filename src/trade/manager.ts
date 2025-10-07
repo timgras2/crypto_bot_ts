@@ -87,7 +87,7 @@ export class TradeManager {
       try {
         const trade = this.deserializeTrade(serialized);
         this.activeTrades.set(trade.market, trade);
-        await this.startMonitoring(trade.market, trade.buyPrice, trade.quantity);
+        await this.startMonitoringForRestoredTrade(trade);
         logger.info(`Restored monitoring for ${trade.market}`);
       } catch (error) {
         logger.error(`Failed to restore trade for ${serialized.market}: ${String(error)}`);
@@ -335,6 +335,25 @@ export class TradeManager {
 
     // Start monitoring loop
     void this.monitorTrade(symbol, abortController.signal);
+  }
+
+  /**
+   * Start monitoring for a restored trade (preserves original startTime)
+   */
+  private async startMonitoringForRestoredTrade(trade: TradeState): Promise<void> {
+    // Prevent duplicate monitoring tasks
+    if (this.monitoringTasks.has(trade.market)) {
+      logger.warn(`Already monitoring ${trade.market}, skipping duplicate startMonitoring call`);
+      return;
+    }
+
+    // Trade state is already in activeTrades, just start the monitoring task
+    // Create abort controller for this monitoring task
+    const abortController = new AbortController();
+    this.monitoringTasks.set(trade.market, abortController);
+
+    // Start monitoring loop
+    void this.monitorTrade(trade.market, abortController.signal);
   }
 
   /**
