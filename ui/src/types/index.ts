@@ -3,7 +3,7 @@ export type SerializedTradeState = {
   market: string;
   buyPrice: string;
   quantity: string;
-  investedQuote: string;
+  investedQuote?: string; // Optional for backward compatibility with old trades
   currentPrice: string;
   highestPrice: string;
   trailingStopPrice: string;

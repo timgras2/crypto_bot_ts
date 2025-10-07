@@ -37,17 +37,28 @@ export async function loadJson<T>(filename: string, defaultValue: T): Promise<T>
 }
 
 /**
- * Save JSON data to file
+ * Save JSON data to file atomically
+ * Writes to a temporary file first, then renames to prevent corruption
  */
 export async function saveJson<T>(filename: string, data: T): Promise<void> {
   await ensureDataDir();
   const filePath = path.join(DATA_DIR, filename);
+  const tempPath = `${filePath}.tmp`;
 
   try {
-    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+    // Write to temporary file first
+    await fs.writeFile(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    // Atomic rename (overwrites destination)
+    await fs.rename(tempPath, filePath);
     logger.debug(`Saved data to ${filename}`);
   } catch (error) {
     logger.error(`Error saving ${filename}: ${String(error)}`);
+    // Clean up temp file if it exists
+    try {
+      await fs.unlink(tempPath);
+    } catch {
+      // Ignore cleanup errors
+    }
     throw error;
   }
 }

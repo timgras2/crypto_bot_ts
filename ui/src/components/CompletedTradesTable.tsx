@@ -73,6 +73,10 @@ export function CompletedTradesTable({ trades }: CompletedTradesTableProps) {
             {recentTrades.map((trade, index) => {
               const profitLoss = parseFloat(trade.profitLossPct);
               const isProfit = profitLoss > 0;
+              // Fallback for old trades without investedQuote
+              const invested = trade.investedQuote
+                ? parseFloat(trade.investedQuote)
+                : parseFloat(trade.buyPrice) * parseFloat(trade.quantity);
 
               return (
                 <tr key={`${trade.market}-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
@@ -86,7 +90,7 @@ export function CompletedTradesTable({ trades }: CompletedTradesTableProps) {
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {parseFloat(trade.investedQuote).toFixed(2)}
+                    {invested.toFixed(2)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-bold">
                     <span className={isProfit ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}>
