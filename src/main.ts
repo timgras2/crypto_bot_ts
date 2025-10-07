@@ -166,18 +166,27 @@ class TradingBot {
 
         // Update stored markets
         if (currentMarkets.length > 0) {
-          await this.marketTracker.savePreviousMarkets(currentMarkets);
-          this.previousMarkets = currentMarkets;
+          // Use additive-only approach: merge previous + current to prevent false positives
+          // from temporary API issues where pairs might be missing from the response
+          const mergedMarkets = Array.from(new Set([...this.previousMarkets, ...currentMarkets]));
+
+          const newlyAdded = mergedMarkets.length - this.previousMarkets.length;
+          if (newlyAdded > 0) {
+            logger.debug(`Added ${newlyAdded} markets to baseline (total: ${mergedMarkets.length})`);
+          }
+
+          await this.marketTracker.savePreviousMarkets(mergedMarkets);
+          this.previousMarkets = mergedMarkets;
 
           // Handle first run baseline
           if (isFirstRun && scanCount === 1) {
-            console.log(`✅ Baseline established: ${currentMarkets.length} existing markets saved`);
+            console.log(`✅ Baseline established: ${mergedMarkets.length} existing markets saved`);
             console.log(
               `📊 Now monitoring for NEW ${this.config.trading.quoteCurrency} listings...`
             );
           } else if (scanCount === 1) {
             console.log(
-              `📊 Monitoring ${currentMarkets.length} ${this.config.trading.quoteCurrency} markets for new listings`
+              `📊 Monitoring ${mergedMarkets.length} ${this.config.trading.quoteCurrency} markets for new listings`
             );
           }
         }
