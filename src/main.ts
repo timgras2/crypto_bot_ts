@@ -4,6 +4,7 @@ import { MarketTracker } from './market/tracker.js';
 import { TradeManager } from './trade/manager.js';
 import { ListingScheduler } from './scheduler/listing-scheduler.js';
 import { logger } from './utils/logger.js';
+import { PriceAnalyzer } from './utils/price-analyzer.js';
 import { MarketSymbol } from './types.js';
 import Decimal from 'decimal.js';
 
@@ -14,6 +15,7 @@ class TradingBot {
   private running = true;
   private previousMarkets: string[] = [];
   private scheduler: ListingScheduler;
+  private priceAnalyzer: PriceAnalyzer;
 
   constructor(
     private readonly api: MexcAPI,
@@ -22,6 +24,11 @@ class TradingBot {
     private readonly config: ReturnType<typeof loadConfig>
   ) {
     this.scheduler = new ListingScheduler();
+    this.priceAnalyzer = new PriceAnalyzer({
+      maxPriceChangeFromOpen: 10, // Don't buy if price is >10% above open
+      minDropFromHigh: 5, // Confirm downtrend if dropped >5% from peak
+      maxVolatility: 50, // Skip if volatility >50%
+    });
     this.setupSignalHandlers();
   }
 
@@ -82,16 +89,10 @@ class TradingBot {
     this.scheduler.setTradeExecutor(async (symbol: string, quoteCurrency: string) => {
       const fullSymbol = `${symbol}${quoteCurrency}` as MarketSymbol;
 
-      // Verify symbol exists in current markets
-      const currentMarkets = await this.marketTracker.getCurrentMarkets();
-      if (!currentMarkets.includes(fullSymbol)) {
-        logger.debug(`Scheduled listing ${fullSymbol} not yet available in markets`);
-        return false; // Retry
-      }
-
-      // Execute the trade with volume check disabled (scheduled listings have 0 volume at start)
-      await this.handleNewListing(fullSymbol, true);
-      return true; // Success
+      // Execute immediately at scheduled time without any pre-checks
+      // Skip volume check and price analysis for scheduled listings (time-critical)
+      await this.handleNewListing(fullSymbol, true, true);
+      return true; // Always return true - no retries on failure
     });
 
     await this.tradeManager.restoreMonitoring();
@@ -212,7 +213,7 @@ class TradingBot {
   /**
    * Handle a new listing detection
    */
-  private async handleNewListing(market: MarketSymbol, skipVolumeCheck: boolean = false): Promise<void> {
+  private async handleNewListing(market: MarketSymbol, skipVolumeCheck: boolean = false, skipPriceAnalysis: boolean = false): Promise<void> {
     console.log(`\n🚨 NEW LISTING DETECTED: ${market}`);
     logger.info(`Attempting to trade new listing: ${market}`);
 
@@ -264,6 +265,40 @@ class TradingBot {
       } else {
         console.log(`⏰ Scheduled listing - skipping volume check (listings start with 0 volume)`);
         logger.info(`Scheduled listing ${market} - bypassing volume validation, using full trade amount`);
+      }
+    }
+
+    // Perform price analysis for scheduled listings (skip for naturally detected listings)
+    if (!skipPriceAnalysis && skipVolumeCheck) {
+      console.log(`📊 Analyzing price action to avoid peak buying...`);
+
+      // Get recent klines (last 5 minutes of 1m candles)
+      const klines = await this.api.getKlines(market, '1m', 5);
+
+      if (klines && klines.length > 0) {
+        const analysis = this.priceAnalyzer.analyzeEntry(klines);
+
+        if (analysis) {
+          console.log(
+            `📈 Price Analysis: open=${analysis.openPrice.toString()}, ` +
+            `current=${analysis.currentPrice.toString()}, ` +
+            `change=${analysis.priceChangeFromOpen.toFixed(2)}%, ` +
+            `dropFromHigh=${analysis.dropFromHigh.toFixed(2)}%`
+          );
+
+          if (!analysis.shouldTrade) {
+            console.log(`⚠️  TRADE SKIPPED: ${analysis.reason}`);
+            logger.warn(`Skipping ${market} trade: ${analysis.reason}`);
+            return;
+          }
+
+          console.log(`✅ Price analysis passed: ${analysis.reason}`);
+        } else {
+          console.log(`⚠️  Could not analyze price action, proceeding with caution...`);
+        }
+      } else {
+        console.log(`⚠️  No kline data available yet, proceeding without price analysis`);
+        logger.warn(`No kline data for ${market}, skipping price analysis`);
       }
     }
 
