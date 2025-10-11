@@ -153,6 +153,35 @@ export interface SymbolInfo {
 }
 
 /**
+ * MEXC API kline (candlestick) response
+ * Array format: [openTime, open, high, low, close, volume, closeTime, quoteVolume]
+ */
+export type KlineData = [
+  number, // Open time
+  string, // Open price
+  string, // High price
+  string, // Low price
+  string, // Close price
+  string, // Volume
+  number, // Close time
+  string  // Quote asset volume
+];
+
+/**
+ * Parsed kline data for easier access
+ */
+export interface Kline {
+  openTime: number;
+  open: Decimal;
+  high: Decimal;
+  low: Decimal;
+  close: Decimal;
+  volume: Decimal;
+  closeTime: number;
+  quoteVolume: Decimal;
+}
+
+/**
  * Result type for operations that can fail
  */
 export type Result<T, E = Error> =

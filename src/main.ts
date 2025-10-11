@@ -73,13 +73,14 @@ class TradingBot {
    */
   async run(): Promise<void> {
     logger.info('Starting trading bot');
-    console.log('🤖 Bot is now active and scanning for new listings...');
+    console.log('🤖 Bot is now active - trades via scheduled listings only');
     console.log(`💰 Max trade amount: ${this.config.trading.maxTradeAmount.toString()} USDT`);
     console.log(`🔄 Checking every ${this.config.trading.checkInterval} seconds`);
     console.log(
       `📈 Stop loss: ${this.config.trading.stopLossPct.toString()}% | Trailing stop: ${this.config.trading.trailingPct.toString()}%`
     );
     console.log(`💱 Quote currency: ${this.config.trading.quoteCurrency}`);
+    console.log('📅 Add listings to data/scheduled_listings.json to trade');
     console.log('-'.repeat(60));
 
     // Initialize scheduler once on startup
@@ -104,7 +105,7 @@ class TradingBot {
       console.log(`⏰ Next scheduled listing: ${nextListing.symbol} at ${timeStr}`);
     }
 
-    // Load previous markets
+    // Load previous markets for baseline tracking (informational only)
     this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
 
     const isFirstRun = this.previousMarkets.length === 0;
@@ -122,79 +123,59 @@ class TradingBot {
         // Show periodic status
         if (scanCount % 6 === 1) {
           const activeTrades = this.tradeManager.getActiveTradesCount();
+          const nextScheduled = this.scheduler.getNextListing();
+
           if (activeTrades > 0) {
             console.log(
               `🕐 ${currentTime} | ✅ Bot running | 📊 ${activeTrades} active trades | Scan #${scanCount}`
             );
+          } else if (nextScheduled) {
+            const timeUntil = new Date(nextScheduled.listingTime).getTime() - Date.now();
+            const minutesUntil = Math.floor(timeUntil / 60000);
+            console.log(
+              `🕐 ${currentTime} | ✅ Bot running | ⏰ Next: ${nextScheduled.symbol} in ${minutesUntil}m | Scan #${scanCount}`
+            );
           } else {
             console.log(
-              `🕐 ${currentTime} | ✅ Bot running | 👀 Scanning for new listings... | Scan #${scanCount}`
+              `🕐 ${currentTime} | ✅ Bot running | 📅 No scheduled listings | Scan #${scanCount}`
             );
           }
         }
-
-        // Reload previous markets from disk (detect manual changes)
-        const oldPreviousMarkets = this.previousMarkets;
-        this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
 
         // Check if scheduled listings file changed (only reload if modified)
         const schedulerNeedsReload = await this.scheduler.checkForChanges();
         if (schedulerNeedsReload) {
           logger.info('Scheduled listings file changed, reloading...');
           await this.scheduler.initialize();
-        }
 
-        if (
-          new Set(oldPreviousMarkets).size !== new Set(this.previousMarkets).size ||
-          !oldPreviousMarkets.every((m) => this.previousMarkets.includes(m))
-        ) {
-          const removed = oldPreviousMarkets.filter((m) => !this.previousMarkets.includes(m));
-          const added = this.previousMarkets.filter((m) => !oldPreviousMarkets.includes(m));
-
-          if (removed.length > 0) {
-            console.log(`📝 Manual file change detected - Removed pairs: ${removed.join(', ')}`);
-            logger.info(`Manual removal detected: ${removed.join(', ')}`);
-          }
-          if (added.length > 0) {
-            console.log(`📝 Manual file change detected - Added pairs: ${added.join(', ')}`);
-            logger.info(`Manual additions detected: ${added.join(', ')}`);
+          const newNextListing = this.scheduler.getNextListing();
+          if (newNextListing) {
+            const timeStr = new Date(newNextListing.listingTime).toLocaleString();
+            console.log(`⏰ Updated: Next scheduled listing is ${newNextListing.symbol} at ${timeStr}`);
           }
         }
 
-        // Detect new listings
-        const { newListings, currentMarkets } =
-          await this.marketTracker.detectNewListings(this.previousMarkets);
+        // Update market baseline periodically (for informational purposes)
+        if (scanCount % 60 === 1) { // Update every ~10 minutes (60 scans * 10s)
+          const { currentMarkets } = await this.marketTracker.detectNewListings(this.previousMarkets);
 
-        // Update stored markets
-        if (currentMarkets.length > 0) {
-          // Use additive-only approach: merge previous + current to prevent false positives
-          // from temporary API issues where pairs might be missing from the response
-          const mergedMarkets = Array.from(new Set([...this.previousMarkets, ...currentMarkets]));
+          if (currentMarkets.length > 0) {
+            // Use additive-only approach: merge previous + current to prevent false positives
+            const mergedMarkets = Array.from(new Set([...this.previousMarkets, ...currentMarkets]));
 
-          const newlyAdded = mergedMarkets.length - this.previousMarkets.length;
-          if (newlyAdded > 0) {
-            logger.debug(`Added ${newlyAdded} markets to baseline (total: ${mergedMarkets.length})`);
+            const newlyAdded = mergedMarkets.length - this.previousMarkets.length;
+            if (newlyAdded > 0) {
+              logger.info(`Market baseline updated: +${newlyAdded} pairs (total: ${mergedMarkets.length})`);
+            }
+
+            await this.marketTracker.savePreviousMarkets(mergedMarkets);
+            this.previousMarkets = mergedMarkets;
+
+            // Handle first run baseline
+            if (isFirstRun && scanCount === 1) {
+              console.log(`✅ Baseline established: ${mergedMarkets.length} existing markets saved`);
+            }
           }
-
-          await this.marketTracker.savePreviousMarkets(mergedMarkets);
-          this.previousMarkets = mergedMarkets;
-
-          // Handle first run baseline
-          if (isFirstRun && scanCount === 1) {
-            console.log(`✅ Baseline established: ${mergedMarkets.length} existing markets saved`);
-            console.log(
-              `📊 Now monitoring for NEW ${this.config.trading.quoteCurrency} listings...`
-            );
-          } else if (scanCount === 1) {
-            console.log(
-              `📊 Monitoring ${mergedMarkets.length} ${this.config.trading.quoteCurrency} markets for new listings`
-            );
-          }
-        }
-
-        // Process naturally detected new listings
-        for (const market of newListings) {
-          await this.handleNewListing(market);
         }
 
         // Normal polling interval (scheduled listings are handled by timers)

@@ -226,6 +226,50 @@ export class MexcAPI {
   }
 
   /**
+   * Get klines (candlestick) data for a symbol
+   * @param symbol - Trading pair symbol
+   * @param interval - Kline interval (1m, 5m, 15m, 30m, 1h, 4h, 1d, etc.)
+   * @param limit - Number of klines to return (max 1000, default 500)
+   * @param startTime - Optional start time in milliseconds
+   * @param endTime - Optional end time in milliseconds
+   */
+  async getKlines(
+    symbol: string,
+    interval: string = '1m',
+    limit: number = 500,
+    startTime?: number,
+    endTime?: number
+  ): Promise<Array<[number, string, string, string, string, string, number, string]> | null> {
+    const params: Record<string, string | number> = {
+      symbol,
+      interval,
+      limit,
+    };
+
+    if (startTime) params.startTime = startTime;
+    if (endTime) params.endTime = endTime;
+
+    // DEBUG: Log what we're sending
+    console.log(`🔍 getKlines params:`, params);
+
+    const result = await this.request<Array<[number, string, string, string, string, string, number, string]>>(
+      'GET',
+      '/api/v3/klines',
+      params
+    );
+
+    // DEBUG: Log what we received
+    if (result && result.length > 0) {
+      const firstCandle = result[0];
+      if (firstCandle) {
+        logger.debug(`getKlines response: ${result.length} candles, first timestamp=${firstCandle[0]} (${new Date(firstCandle[0]).toISOString()})`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Place a new order
    */
   async placeOrder(orderRequest: OrderRequest): Promise<OrderResponse | null> {
@@ -266,6 +310,35 @@ export class MexcAPI {
    */
   async getAccount(): Promise<unknown> {
     return this.request('GET', '/api/v3/account', {}, true);
+  }
+
+  /**
+   * Get balance for a specific asset
+   * @param asset - Asset symbol (e.g., 'BTC', 'NPC', 'NAKA')
+   * @returns Available balance as string, or null if not found
+   */
+  async getAccountBalance(asset: string): Promise<string | null> {
+    const account = await this.request<{
+      balances: Array<{
+        asset: string;
+        free: string;
+        locked: string;
+      }>;
+    }>('GET', '/api/v3/account', {}, true);
+
+    if (!account) {
+      logger.error(`Failed to fetch account info for balance lookup`);
+      return null;
+    }
+
+    const balance = account.balances.find((b) => b.asset === asset);
+    if (!balance) {
+      logger.warn(`Asset ${asset} not found in account balances`);
+      return null;
+    }
+
+    logger.debug(`Balance for ${asset}: free=${balance.free}, locked=${balance.locked}`);
+    return balance.free;
   }
 
   /**

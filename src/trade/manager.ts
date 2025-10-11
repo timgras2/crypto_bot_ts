@@ -449,6 +449,55 @@ export class TradeManager {
       return;
     }
 
+    // Extract base asset from symbol (e.g., NPCUSDC -> NPC)
+    // Need to get the symbol info to know the actual base asset
+    const exchangeInfo = await this.api.getExchangeInfo();
+    if (!exchangeInfo) {
+      logger.error(`Cannot fetch exchange info for ${symbol}`);
+      return;
+    }
+
+    const symbolInfo = exchangeInfo.symbols.find((s) => s.symbol === symbol);
+    if (!symbolInfo) {
+      logger.error(`Symbol ${symbol} not found in exchange info`);
+      return;
+    }
+
+    const baseAsset = symbolInfo.baseAsset;
+
+    // Fetch actual account balance to avoid "Oversold" errors
+    const actualBalanceStr = await this.api.getAccountBalance(baseAsset);
+    if (!actualBalanceStr) {
+      logger.warn(
+        `Cannot fetch balance for ${baseAsset} (asset not found or zero balance). Trade may have already been sold.`
+      );
+
+      // If balance is zero/not found, assume trade already sold and clean up
+      logger.info(`Removing ${symbol} from active trades (no balance to sell)`);
+      this.activeTrades.delete(symbol);
+      this.monitoringTasks.get(symbol)?.abort();
+      this.monitoringTasks.delete(symbol);
+      await this.saveActiveTrades();
+      return;
+    }
+
+    const actualBalance = new Decimal(actualBalanceStr);
+
+    // Check if balance is essentially zero (dust)
+    if (actualBalance.lessThan('0.00000001')) {
+      logger.info(`Balance for ${baseAsset} is dust (${actualBalance.toString()}), cleaning up trade`);
+      this.activeTrades.delete(symbol);
+      this.monitoringTasks.get(symbol)?.abort();
+      this.monitoringTasks.delete(symbol);
+      await this.saveActiveTrades();
+      return;
+    }
+
+    // Apply aggressive safety margin (98% of actual balance) to account for fees, dust, and rounding
+    // MEXC charges maker/taker fees which reduce the actual balance below what we think we bought
+    const safetyMargin = new Decimal('0.98');
+    const safeQuantity = actualBalance.mul(safetyMargin);
+
     // Get symbol precision and round quantity
     const precision = await this.api.getSymbolPrecision(symbol);
     let roundedQuantity: Decimal;
@@ -457,12 +506,19 @@ export class TradeManager {
       logger.warn(
         `Cannot get precision for ${symbol}, attempting sell with full quantity (exchange may reject)`
       );
-      roundedQuantity = trade.quantity;
+      roundedQuantity = safeQuantity;
     } else {
-      // Round quantity to the correct decimal places
-      roundedQuantity = trade.quantity.toDecimalPlaces(precision, Decimal.ROUND_DOWN);
+      // Round quantity DOWN to the correct decimal places
+      roundedQuantity = safeQuantity.toDecimalPlaces(precision, Decimal.ROUND_DOWN);
+
+      // If the balance is very small, we might round down to zero
+      if (roundedQuantity.isZero()) {
+        logger.error(`Rounded quantity is zero for ${symbol}, balance too small to sell`);
+        return;
+      }
+
       logger.info(
-        `Selling ${symbol}: quantity ${trade.quantity.toString()} rounded to ${roundedQuantity.toString()} (precision: ${precision})`
+        `Selling ${symbol}: stored=${trade.quantity.toString()}, actual=${actualBalance.toString()}, safe=${roundedQuantity.toString()} (precision: ${precision}, margin: 98%)`
       );
     }
 
