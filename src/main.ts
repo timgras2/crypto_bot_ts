@@ -4,6 +4,7 @@ import { MarketTracker } from './market/tracker.js';
 import { TradeManager } from './trade/manager.js';
 import { ListingScheduler } from './scheduler/listing-scheduler.js';
 import { logger } from './utils/logger.js';
+import { PriceAnalyzer } from './utils/price-analyzer.js';
 import { MarketSymbol } from './types.js';
 import Decimal from 'decimal.js';
 
@@ -14,6 +15,7 @@ class TradingBot {
   private running = true;
   private previousMarkets: string[] = [];
   private scheduler: ListingScheduler;
+  private priceAnalyzer: PriceAnalyzer;
 
   constructor(
     private readonly api: MexcAPI,
@@ -22,6 +24,11 @@ class TradingBot {
     private readonly config: ReturnType<typeof loadConfig>
   ) {
     this.scheduler = new ListingScheduler();
+    this.priceAnalyzer = new PriceAnalyzer({
+      maxPriceChangeFromOpen: 10, // Don't buy if price is >10% above open
+      minDropFromHigh: 5, // Confirm downtrend if dropped >5% from peak
+      maxVolatility: 50, // Skip if volatility >50%
+    });
     this.setupSignalHandlers();
   }
 
@@ -66,17 +73,29 @@ class TradingBot {
    */
   async run(): Promise<void> {
     logger.info('Starting trading bot');
-    console.log('🤖 Bot is now active and scanning for new listings...');
+    console.log('🤖 Bot is now active - trades via scheduled listings only');
     console.log(`💰 Max trade amount: ${this.config.trading.maxTradeAmount.toString()} USDT`);
     console.log(`🔄 Checking every ${this.config.trading.checkInterval} seconds`);
     console.log(
       `📈 Stop loss: ${this.config.trading.stopLossPct.toString()}% | Trailing stop: ${this.config.trading.trailingPct.toString()}%`
     );
     console.log(`💱 Quote currency: ${this.config.trading.quoteCurrency}`);
+    console.log('📅 Add listings to data/scheduled_listings.json to trade');
     console.log('-'.repeat(60));
 
-    // Initialize scheduler and restore any previously active trades
+    // Initialize scheduler once on startup
     await this.scheduler.initialize();
+
+    // Register trade executor for scheduled listings
+    this.scheduler.setTradeExecutor(async (symbol: string, quoteCurrency: string) => {
+      const fullSymbol = `${symbol}${quoteCurrency}` as MarketSymbol;
+
+      // Execute immediately at scheduled time without any pre-checks
+      // Skip volume check and price analysis for scheduled listings (time-critical)
+      await this.handleNewListing(fullSymbol, true, true);
+      return true; // Always return true - no retries on failure
+    });
+
     await this.tradeManager.restoreMonitoring();
 
     // Show next scheduled listing if any
@@ -86,7 +105,7 @@ class TradingBot {
       console.log(`⏰ Next scheduled listing: ${nextListing.symbol} at ${timeStr}`);
     }
 
-    // Load previous markets
+    // Load previous markets for baseline tracking (informational only)
     this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
 
     const isFirstRun = this.previousMarkets.length === 0;
@@ -104,105 +123,63 @@ class TradingBot {
         // Show periodic status
         if (scanCount % 6 === 1) {
           const activeTrades = this.tradeManager.getActiveTradesCount();
+          const nextScheduled = this.scheduler.getNextListing();
+
           if (activeTrades > 0) {
             console.log(
               `🕐 ${currentTime} | ✅ Bot running | 📊 ${activeTrades} active trades | Scan #${scanCount}`
             );
+          } else if (nextScheduled) {
+            const timeUntil = new Date(nextScheduled.listingTime).getTime() - Date.now();
+            const minutesUntil = Math.floor(timeUntil / 60000);
+            console.log(
+              `🕐 ${currentTime} | ✅ Bot running | ⏰ Next: ${nextScheduled.symbol} in ${minutesUntil}m | Scan #${scanCount}`
+            );
           } else {
             console.log(
-              `🕐 ${currentTime} | ✅ Bot running | 👀 Scanning for new listings... | Scan #${scanCount}`
+              `🕐 ${currentTime} | ✅ Bot running | 📅 No scheduled listings | Scan #${scanCount}`
             );
           }
         }
 
-        // Reload previous markets from disk (detect manual changes)
-        const oldPreviousMarkets = this.previousMarkets;
-        this.previousMarkets = await this.marketTracker.loadPreviousMarkets();
+        // Check if scheduled listings file changed (only reload if modified)
+        const schedulerNeedsReload = await this.scheduler.checkForChanges();
+        if (schedulerNeedsReload) {
+          logger.info('Scheduled listings file changed, reloading...');
+          await this.scheduler.initialize();
 
-        // Reload scheduled listings from disk (detect new listings added via API)
-        await this.scheduler.initialize();
-
-        if (
-          new Set(oldPreviousMarkets).size !== new Set(this.previousMarkets).size ||
-          !oldPreviousMarkets.every((m) => this.previousMarkets.includes(m))
-        ) {
-          const removed = oldPreviousMarkets.filter((m) => !this.previousMarkets.includes(m));
-          const added = this.previousMarkets.filter((m) => !oldPreviousMarkets.includes(m));
-
-          if (removed.length > 0) {
-            console.log(`📝 Manual file change detected - Removed pairs: ${removed.join(', ')}`);
-            logger.info(`Manual removal detected: ${removed.join(', ')}`);
-          }
-          if (added.length > 0) {
-            console.log(`📝 Manual file change detected - Added pairs: ${added.join(', ')}`);
-            logger.info(`Manual additions detected: ${added.join(', ')}`);
+          const newNextListing = this.scheduler.getNextListing();
+          if (newNextListing) {
+            const timeStr = new Date(newNextListing.listingTime).toLocaleString();
+            console.log(`⏰ Updated: Next scheduled listing is ${newNextListing.symbol} at ${timeStr}`);
           }
         }
 
-        // Detect new listings
-        const { newListings, currentMarkets } =
-          await this.marketTracker.detectNewListings(this.previousMarkets);
+        // Update market baseline periodically (for informational purposes)
+        if (scanCount % 60 === 1) { // Update every ~10 minutes (60 scans * 10s)
+          const { currentMarkets } = await this.marketTracker.detectNewListings(this.previousMarkets);
 
-        // Update stored markets
-        if (currentMarkets.length > 0) {
-          // Use additive-only approach: merge previous + current to prevent false positives
-          // from temporary API issues where pairs might be missing from the response
-          const mergedMarkets = Array.from(new Set([...this.previousMarkets, ...currentMarkets]));
+          if (currentMarkets.length > 0) {
+            // Use additive-only approach: merge previous + current to prevent false positives
+            const mergedMarkets = Array.from(new Set([...this.previousMarkets, ...currentMarkets]));
 
-          const newlyAdded = mergedMarkets.length - this.previousMarkets.length;
-          if (newlyAdded > 0) {
-            logger.debug(`Added ${newlyAdded} markets to baseline (total: ${mergedMarkets.length})`);
-          }
+            const newlyAdded = mergedMarkets.length - this.previousMarkets.length;
+            if (newlyAdded > 0) {
+              logger.info(`Market baseline updated: +${newlyAdded} pairs (total: ${mergedMarkets.length})`);
+            }
 
-          await this.marketTracker.savePreviousMarkets(mergedMarkets);
-          this.previousMarkets = mergedMarkets;
+            await this.marketTracker.savePreviousMarkets(mergedMarkets);
+            this.previousMarkets = mergedMarkets;
 
-          // Handle first run baseline
-          if (isFirstRun && scanCount === 1) {
-            console.log(`✅ Baseline established: ${mergedMarkets.length} existing markets saved`);
-            console.log(
-              `📊 Now monitoring for NEW ${this.config.trading.quoteCurrency} listings...`
-            );
-          } else if (scanCount === 1) {
-            console.log(
-              `📊 Monitoring ${mergedMarkets.length} ${this.config.trading.quoteCurrency} markets for new listings`
-            );
+            // Handle first run baseline
+            if (isFirstRun && scanCount === 1) {
+              console.log(`✅ Baseline established: ${mergedMarkets.length} existing markets saved`);
+            }
           }
         }
 
-        // Process new listings
-        for (const market of newListings) {
-          // Check if this was a scheduled listing before processing
-          const scheduledListings = this.scheduler.getScheduledListings();
-          const matchedListing = scheduledListings.find(
-            l => l.symbol === market && (l.status === 'active' || l.status === 'pending')
-          );
-          
-          if (matchedListing) {
-            console.log(`🎯 SCHEDULED LISTING DETECTED: ${market} - executing precision trade!`);
-            await this.scheduler.markListingTraded(market, matchedListing.listingTime);
-          }
-          
-          await this.handleNewListing(market);
-        }
-
-        // Use ultra-fast polling if near a scheduled listing, otherwise normal polling
-        const isUltraFastMode = this.scheduler.shouldUseUltraFastPolling();
-        const sleepInterval = isUltraFastMode 
-          ? this.scheduler.getUltraFastInterval()
-          : this.config.trading.checkInterval * 1000;
-        
-        // Log when entering/exiting ultra-fast mode
-        if (isUltraFastMode && scanCount % 50 === 1) {
-          const nextListing = this.scheduler.getNextListing();
-          if (nextListing) {
-            const timeUntil = new Date(nextListing.listingTime).getTime() - Date.now();
-            const secondsUntil = Math.round(timeUntil / 1000);
-            console.log(`🔥 ULTRA-FAST MODE: ${nextListing.symbol} listing in ~${secondsUntil}s (polling every ${sleepInterval}ms)`);
-          }
-        }
-        
-        await this.sleep(sleepInterval);
+        // Normal polling interval (scheduled listings are handled by timers)
+        await this.sleep(this.config.trading.checkInterval * 1000);
       } catch (error) {
         console.log(`🚨 ERROR in main loop: ${String(error)}`);
         logger.error(`Error in main loop: ${String(error)}`);
@@ -217,7 +194,7 @@ class TradingBot {
   /**
    * Handle a new listing detection
    */
-  private async handleNewListing(market: MarketSymbol): Promise<void> {
+  private async handleNewListing(market: MarketSymbol, skipVolumeCheck: boolean = false, skipPriceAnalysis: boolean = false): Promise<void> {
     console.log(`\n🚨 NEW LISTING DETECTED: ${market}`);
     logger.info(`Attempting to trade new listing: ${market}`);
 
@@ -249,20 +226,60 @@ class TradingBot {
       tradeAmount = Decimal.min(this.config.trading.maxTradeAmount.mul(0.5), new Decimal(5));
       console.log(`🛡️  Using reduced amount ${tradeAmount.toString()} USDT for safety`);
     } else {
-      // Validate volume
+      // Show ticker data
       const volume = new Decimal(ticker.quoteVolume);
-      const minVolumeThreshold = this.config.trading.maxTradeAmount.mul(10);
-
       console.log(
         `📊 ${market} | Price: ${ticker.lastPrice} | Volume: ${volume.toString()} USDT`
       );
 
-      if (volume.lt(minVolumeThreshold)) {
-        console.log(
-          `⚠️  Volume too low (${volume.toString()} < ${minVolumeThreshold.toString()} USDT), skipping...`
-        );
-        logger.warn(`Skipping ${market} due to insufficient volume: ${volume.toString()}`);
-        return;
+      // Validate volume (skip for scheduled listings as they start with 0 volume)
+      if (!skipVolumeCheck) {
+        const minVolumeThreshold = this.config.trading.maxTradeAmount.mul(10);
+
+        if (volume.lt(minVolumeThreshold)) {
+          console.log(
+            `⚠️  Volume too low (${volume.toString()} < ${minVolumeThreshold.toString()} USDT), skipping...`
+          );
+          logger.warn(`Skipping ${market} due to insufficient volume: ${volume.toString()}`);
+          return;
+        }
+      } else {
+        console.log(`⏰ Scheduled listing - skipping volume check (listings start with 0 volume)`);
+        logger.info(`Scheduled listing ${market} - bypassing volume validation, using full trade amount`);
+      }
+    }
+
+    // Perform price analysis for scheduled listings (skip for naturally detected listings)
+    if (!skipPriceAnalysis && skipVolumeCheck) {
+      console.log(`📊 Analyzing price action to avoid peak buying...`);
+
+      // Get recent klines (last 5 minutes of 1m candles)
+      const klines = await this.api.getKlines(market, '1m', 5);
+
+      if (klines && klines.length > 0) {
+        const analysis = this.priceAnalyzer.analyzeEntry(klines);
+
+        if (analysis) {
+          console.log(
+            `📈 Price Analysis: open=${analysis.openPrice.toString()}, ` +
+            `current=${analysis.currentPrice.toString()}, ` +
+            `change=${analysis.priceChangeFromOpen.toFixed(2)}%, ` +
+            `dropFromHigh=${analysis.dropFromHigh.toFixed(2)}%`
+          );
+
+          if (!analysis.shouldTrade) {
+            console.log(`⚠️  TRADE SKIPPED: ${analysis.reason}`);
+            logger.warn(`Skipping ${market} trade: ${analysis.reason}`);
+            return;
+          }
+
+          console.log(`✅ Price analysis passed: ${analysis.reason}`);
+        } else {
+          console.log(`⚠️  Could not analyze price action, proceeding with caution...`);
+        }
+      } else {
+        console.log(`⚠️  No kline data available yet, proceeding without price analysis`);
+        logger.warn(`No kline data for ${market}, skipping price analysis`);
       }
     }
 
@@ -291,7 +308,7 @@ class TradingBot {
       }
 
       console.log(`🎯 Starting monitoring with trailing stop-loss...`);
-      await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity);
+      await this.tradeManager.startMonitoring(market, buyResult.avgPrice, buyResult.quantity, buyResult.investedQuote);
     } else {
       console.log(`❌ BUY FAILED: Could not execute order for ${market}`);
     }

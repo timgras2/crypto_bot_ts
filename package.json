@@ -5,18 +5,26 @@
   "main": "dist/main.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --ignore data/** --ignore logs/** src/main.ts",
+    "dev:no-watch": "tsx src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
     "test": "jest",
     "test:watch": "jest --watch",
+    "test:scheduled-listing": "tsx src/scripts/test-scheduled-listing.ts",
+    "test:pre-commit": "tsx src/scripts/pre-commit-test.ts",
+    "test:all": "npm run test:pre-commit",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.ts\"",
     "server": "tsx src/server/api.ts",
+    "schedule": "tsx src/cli/schedule-listing.ts",
+    "analyze-listings": "tsx src/scripts/analyze-listings.ts",
     "ui:dev": "cd ui && npm run dev",
     "ui:build": "cd ui && npm run build",
-    "dev:all": "concurrently \"npm run dev\" \"npm run server\" \"npm run ui:dev\" --names \"BOT,API,UI\" --prefix-colors \"green,blue,magenta\""
+    "dev:all": "concurrently \"npm run dev\" \"npm run server\" \"npm run ui:dev\" --names \"BOT,API,UI\" --prefix-colors \"green,blue,magenta\"",
+    "dev:bot-only": "tsx src/main.ts",
+    "dev:interactive": "echo Starting bot in interactive mode... && tsx src/main.ts"
   },
   "keywords": [
     "cryptocurrency",
@@ -31,11 +39,13 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
+    "@types/readline-sync": "^1.4.8",
     "axios": "^1.6.5",
     "cors": "^2.8.5",
     "decimal.js": "^10.4.3",
     "dotenv": "^16.4.1",
     "express": "^5.1.0",
+    "readline-sync": "^1.4.10",
     "winston": "^3.11.0",
     "zod": "^3.22.4"
   },

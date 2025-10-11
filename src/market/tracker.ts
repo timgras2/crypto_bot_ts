@@ -55,6 +55,35 @@ export class MarketTracker {
   }
 
   /**
+   * Get current markets from the exchange
+   */
+  async getCurrentMarkets(): Promise<string[]> {
+    try {
+      const exchangeInfo = await this.api.getExchangeInfo();
+
+      if (!exchangeInfo) {
+        logger.warn('Failed to fetch exchange info');
+        return [];
+      }
+
+      // Filter for active trading pairs with the specified quote currency
+      const currentMarkets = exchangeInfo.symbols
+        .filter(
+          (symbol) =>
+            (symbol.status === '1' || symbol.status === 'ENABLED') &&
+            symbol.isSpotTradingAllowed &&
+            symbol.quoteAsset === this.quoteCurrency
+        )
+        .map((symbol) => symbol.symbol);
+
+      return currentMarkets;
+    } catch (error) {
+      logger.error(`Error fetching current markets: ${String(error)}`);
+      return [];
+    }
+  }
+
+  /**
    * Detect new listings by comparing current markets with previous markets
    */
   async detectNewListings(

@@ -15,6 +15,7 @@ A fully automated cryptocurrency trading bot for the MEXC exchange, built with T
 ## Features
 
 - 🔍 **New Listing Detection** - Monitors MEXC for newly added trading pairs
+- ⏰ **Scheduled Listings** - Pre-schedule trades for announced listings with millisecond precision
 - 💰 **Automated Trading** - Places market buy orders for new listings with volume validation
 - 📈 **Trailing Stop-Loss** - Dynamic profit protection that adjusts with price increases
 - 💾 **State Recovery** - Resumes monitoring after bot restarts without losing positions
@@ -131,9 +132,13 @@ crypto-bot-ts/
 │   │   └── tracker.ts       # Market listing tracker
 │   ├── trade/
 │   │   └── manager.ts       # Trade execution and monitoring
+│   ├── scheduler/
+│   │   └── listing-scheduler.ts  # Scheduled listing manager
 │   ├── server/
 │   │   ├── api.ts           # Express API server
 │   │   └── stats.ts         # Trading statistics calculator
+│   ├── cli/
+│   │   └── schedule-listing.ts   # CLI tool for scheduling
 │   └── utils/
 │       ├── logger.ts        # Winston logger setup
 │       └── persistence.ts   # JSON file persistence
@@ -141,19 +146,26 @@ crypto-bot-ts/
 │   ├── src/
 │   │   ├── components/      # React components
 │   │   ├── hooks/           # Custom React hooks
+│   │   ├── pages/           # Page components
 │   │   ├── types/           # TypeScript types
 │   │   └── main.tsx         # Entry point
 │   └── public/              # Static assets
+├── docs/                    # Documentation
+│   ├── SCHEDULED_LISTINGS.md
+│   └── GIT_STRATEGY.md
 ├── tests/                   # Test files
 ├── data/                    # Runtime data (gitignored)
 │   ├── previous_markets.json
 │   ├── active_trades.json
-│   └── completed_trades.json
+│   ├── completed_trades.json
+│   └── scheduled_listings.json
 ├── logs/                    # Log files (gitignored)
 └── dist/                    # Compiled JavaScript (gitignored)
 ```
 
 ## How It Works
+
+### Organic Listing Detection (Automatic)
 
 1. **Baseline Establishment** - On first run, the bot establishes a baseline of existing markets
 2. **Continuous Monitoring** - Every `CHECK_INTERVAL` seconds, checks for new listings
@@ -161,6 +173,15 @@ crypto-bot-ts/
 4. **Automated Trading** - Places market buy orders for validated new listings
 5. **Trailing Stop-Loss** - Monitors each trade and adjusts stop-loss as price increases
 6. **Profit Protection** - Sells when price drops below trailing stop or stop-loss threshold
+
+### Scheduled Listings (Manual)
+
+1. **Pre-Schedule** - Add upcoming listings with exact times from MEXC announcements
+2. **Timer-Based Execution** - Bot sets precise timers to execute at the scheduled time
+3. **Automatic Retry** - Attempts trade every 100ms for up to 60s if market not immediately tradeable
+4. **Same Monitoring** - Once purchased, uses same trailing stop-loss system as organic trades
+
+See [docs/SCHEDULED_LISTINGS.md](docs/SCHEDULED_LISTINGS.md) for detailed guide.
 
 ### Trailing Stop-Loss Example
 
@@ -180,22 +201,25 @@ Price drops to $1.44: SELL triggered (45% profit protected)
 
 ```bash
 # Bot Commands
-npm run dev          # Bot development mode with hot reload
-npm run build        # Compile TypeScript to JavaScript
-npm start            # Run production build
+npm run dev              # Bot development mode with hot reload
+npm run build            # Compile TypeScript to JavaScript
+npm start                # Run production build
 
 # Dashboard Commands
-npm run server       # Start API server (port 3001)
-npm run ui:dev       # Start UI dev server (port 5173)
-npm run ui:build     # Build UI for production
-npm run dev:all      # Run bot + API + UI concurrently
+npm run server           # Start API server (port 3001)
+npm run ui:dev           # Start UI dev server (port 5173)
+npm run ui:build         # Build UI for production
+npm run dev:all          # Run bot + API + UI concurrently
+
+# Scheduled Listings
+npm run schedule-listing # CLI tool to schedule listings
 
 # Testing & Quality
-npm test             # Run tests
-npm run test:watch   # Run tests in watch mode
-npm run lint         # Lint code
-npm run lint:fix     # Auto-fix linting issues
-npm run format       # Format code with Prettier
+npm test                 # Run tests
+npm run test:watch       # Run tests in watch mode
+npm run lint             # Lint code
+npm run lint:fix         # Auto-fix linting issues
+npm run format           # Format code with Prettier
 ```
 
 ### Running Tests
@@ -225,6 +249,9 @@ The bot includes a real-time web dashboard for monitoring trades and performance
 - `GET /api/trades/active` - Current active trades
 - `GET /api/trades/completed` - Trade history
 - `GET /api/stats` - Trading statistics
+- `GET /api/scheduled-listings` - View scheduled listings
+- `POST /api/scheduled-listings` - Add new scheduled listing
+- `DELETE /api/scheduled-listings/:symbol/:time` - Remove scheduled listing
 
 ## Data Persistence
 
@@ -233,8 +260,9 @@ The bot automatically creates and manages these data files:
 - `data/previous_markets.json` - Baseline of existing markets
 - `data/active_trades.json` - Currently active trades (for recovery)
 - `data/completed_trades.json` - History of completed trades
+- `data/scheduled_listings.json` - Upcoming scheduled listings
 
-**Never delete these files while the bot is running with active trades!**
+**Never delete these files while the bot is running with active trades or pending scheduled listings!**
 
 ## Graceful Shutdown
 

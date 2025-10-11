@@ -37,6 +37,7 @@ export interface TradeState {
   market: MarketSymbol;
   buyPrice: Decimal;
   quantity: Decimal; // Actual quantity bought (base asset)
+  investedQuote: Decimal; // Actual quote currency spent on buy order (USDT/USDC/BTC/etc)
   currentPrice: Decimal;
   highestPrice: Decimal;
   trailingStopPrice: Decimal;
@@ -52,6 +53,7 @@ export interface SerializedTradeState {
   market: string;
   buyPrice: string;
   quantity: string; // Actual quantity bought (base asset)
+  investedQuote: string; // Actual quote currency spent on buy order (USDT/USDC/BTC/etc)
   currentPrice: string;
   highestPrice: string;
   trailingStopPrice: string;
@@ -67,7 +69,7 @@ export interface CompletedTrade extends SerializedTradeState {
   sellPrice: string;
   sellTime: string; // ISO string
   profitLossPct: string;
-  profitLossUsdt: string;
+  profitLossQuote: string; // Profit/loss in quote currency (USDT/USDC/BTC/etc)
   triggerReason: 'stop_loss' | 'trailing_stop' | 'manual';
   durationHours: string;
 }
@@ -148,6 +150,35 @@ export interface SymbolInfo {
   quotePrecision: number;
   quoteAssetPrecision: number;
   isSpotTradingAllowed: boolean;
+}
+
+/**
+ * MEXC API kline (candlestick) response
+ * Array format: [openTime, open, high, low, close, volume, closeTime, quoteVolume]
+ */
+export type KlineData = [
+  number, // Open time
+  string, // Open price
+  string, // High price
+  string, // Low price
+  string, // Close price
+  string, // Volume
+  number, // Close time
+  string  // Quote asset volume
+];
+
+/**
+ * Parsed kline data for easier access
+ */
+export interface Kline {
+  openTime: number;
+  open: Decimal;
+  high: Decimal;
+  low: Decimal;
+  close: Decimal;
+  volume: Decimal;
+  closeTime: number;
+  quoteVolume: Decimal;
 }
 
 /**

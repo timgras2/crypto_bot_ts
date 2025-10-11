@@ -3,6 +3,7 @@ export type SerializedTradeState = {
   market: string;
   buyPrice: string;
   quantity: string;
+  investedQuote?: string; // Optional for backward compatibility with old trades
   currentPrice: string;
   highestPrice: string;
   trailingStopPrice: string;
@@ -15,7 +16,7 @@ export type CompletedTrade = SerializedTradeState & {
   sellPrice: string;
   sellTime: string;
   profitLossPct: string;
-  profitLossUsdt: string;
+  profitLossQuote: string;
   triggerReason: 'stop_loss' | 'trailing_stop' | 'manual';
   durationHours: string;
 }
@@ -45,4 +46,14 @@ export type ApiResponse<T> = {
   data?: T;
   error?: string;
   count?: number;
+}
+
+export interface ScheduledListing {
+  symbol: string;
+  listingTime: string;
+  quoteCurrency: string;
+  notes?: string;
+  status: 'pending' | 'active' | 'completed' | 'missed';
+  createdAt: string;
+  tradedAt?: string;
 }
